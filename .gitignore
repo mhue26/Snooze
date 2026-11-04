@@ -4,3 +4,11 @@
 *.pem
 *.key
 credentials.json
+
+node_modules/
+.expo/
+dist/
+coverage/
+ios/
+android/
+*.tsbuildinfo

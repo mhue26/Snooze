@@ -1,0 +1,25 @@
+---
+description: Propose commit title and body; wait for user edits before git commit or push
+alwaysApply: true
+---
+
+# Git commit and push — user edits message first
+
+When the user asks to commit, push, or “commit and push”:
+
+1. Inspect changes (`git status`, `git diff`, recent `git log`) and draft a **proposed commit title** (first line) and **description** (body, optional).
+2. **Stop before `git commit` or `git push`.** Present the proposal in chat:
+
+   ```text
+   Proposed commit title:
+   <one line>
+
+   Proposed description:
+   <body or “(none)”>
+   ```
+
+3. Ask the user to **edit or approve** the title and description. Use their final wording exactly in `git commit`.
+4. Only after explicit approval (or they paste their revised title/body), run `git add`, `git commit`, and `git push` if they asked for push.
+5. Do not amend or push unless they request it. Do not skip hooks or change git config.
+
+If they approve commit but not push, commit only. If they change the message after seeing the proposal, use the updated text without arguing.

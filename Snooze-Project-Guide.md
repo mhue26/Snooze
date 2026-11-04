@@ -1,10 +1,10 @@
-# Open Sleep — Product Research and Project Guide
+# Snooze — Product Research and Project Guide
 
-**Working title:** Open Sleep; name and availability have not been checked.  
+**App name:** Snooze  
 **Research date:** 3 November 2026.  
 **Status:** Research and proposed implementation plan; no application or classifier has been built or validated.
 
-> A free, fully open-source, cross-platform sleep diary and planner—with encrypted local data, transparent sleep-debt estimates, naps, travel support, free snore tracking and complete export.
+> Snooze — a free, fully open-source, cross-platform sleep diary and planner with encrypted local data, transparent sleep-debt estimates, naps, travel support, free snore tracking and complete export.
 
 ## 1. Product commitments
 
@@ -437,7 +437,7 @@ Being open source does not remove app-store policies or platform signing require
 | Snore model | Not selected. Licence, weights, dataset provenance, performance and runtime must be evaluated. |
 | Travel | Timezone-correct records immediately; circadian advice later. |
 | App licence | Not selected. Review dependency and distribution compatibility. |
-| Branding | Working title only; check naming conflicts, including existing OpenSleep branding, before launch. |
+| Branding | **Snooze** — before launch, verify store listings, trademarks, and domains; avoid confusion with competitor **OpenSleep**. |
 
 Recommended first concrete milestone: **an encrypted cross-platform manual diary with naps, an explainable shortfall calculation and a complete export/restore cycle**, preceded by small feasibility checks for health integration and overnight audio.
 

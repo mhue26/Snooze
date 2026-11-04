@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Snooze",
+    "slug": "snooze",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "snooze-dev",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.snooze.foundation"
+    },
+    "android": {
+      "package": "dev.snooze.foundation"
+    },
+    "plugins": [
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}
