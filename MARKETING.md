@@ -13,4 +13,6 @@
 
 **Derived (on paper cards):** `textOnPaperFaint` — night at **48%** (`rgba(16, 27, 50, 0.48)`) · small **h** / **m** on duration (28px vs 40px numbers).
 
+**Weekday dots:** `dotActive` — glow (`#d5dfff`, 22px circle with day initial) · `dotInactive` — paper at **30%** (`rgba(242, 240, 233, 0.3)`, 6px circle).
+
 Implemented in `src/theme/tokens.ts` (`palette` + `theme` semantics). Other secondary UI uses alpha on **night** / **paper** only.

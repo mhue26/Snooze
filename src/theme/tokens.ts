@@ -41,4 +41,6 @@ export const theme = {
   artAccent: withAlpha(palette.night, 0.42),
   progressOff: withAlpha(palette.night, 0.18),
   progressOn: palette.night,
+  dotActive: palette.glow,
+  dotInactive: withAlpha(palette.paper, 0.3),
 };

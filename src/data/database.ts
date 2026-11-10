@@ -1,6 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { applyMigrationV1, MIGRATION_V1_VERSION } from '../domain/migrations/v1';
 import { applyMigrationV2, MIGRATION_V2_VERSION } from '../domain/migrations/v2';
+import { applyMigrationV3, MIGRATION_V3_VERSION } from '../domain/migrations/v3';
 import { isValidDatabaseKey } from '../domain/crypto';
 import { getOrCreateDatabaseKey } from './encryptionKey';
 
@@ -35,6 +36,7 @@ export async function openEncryptedDatabase(name: string, key: string): Promise<
       const row = await db.getFirstAsync<{ version: number | null }>('SELECT MAX(version) AS version FROM schema_migrations');
       if ((row?.version ?? 0) < MIGRATION_V1_VERSION) applyMigrationV1(db);
       if ((row?.version ?? 0) < MIGRATION_V2_VERSION) applyMigrationV2(db);
+      if ((row?.version ?? 0) < MIGRATION_V3_VERSION) applyMigrationV3(db);
     });
     return { db, cipherVersion: cipher.cipher_version };
   } catch (error) {

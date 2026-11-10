@@ -7,6 +7,7 @@ import { openDatabase, OpenDatabase } from './src/data/database';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { palette, theme } from './src/theme/tokens';
 import { runAndroidDatabaseCheck } from './src/testing/androidDatabaseCheck';
+import { WeekStartProvider } from './src/context/WeekStartContext';
 
 function DatabaseVerification() {
   const [status, setStatus] = useState('Running Android database verification…');
@@ -43,9 +44,11 @@ function MainApp() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      {result
-        ? <NavigationContainer theme={DarkTheme}><RootNavigator db={result.db} /></NavigationContainer>
-        : <View style={styles.loading}>{error ? <Text accessibilityRole="alert" style={styles.message}>Database could not be opened: {error}</Text> : <><ActivityIndicator color={palette.action} /><Text style={styles.message}>Opening encrypted database…</Text></>}</View>}
+      <WeekStartProvider>
+        {result
+          ? <NavigationContainer theme={DarkTheme}><RootNavigator db={result.db} /></NavigationContainer>
+          : <View style={styles.loading}>{error ? <Text accessibilityRole="alert" style={styles.message}>Database could not be opened: {error}</Text> : <><ActivityIndicator color={palette.action} /><Text style={styles.message}>Opening encrypted database…</Text></>}</View>}
+      </WeekStartProvider>
     </SafeAreaProvider>
   );
 }

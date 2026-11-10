@@ -3,7 +3,11 @@ import { AccessibilityInfo, Animated, AppState, FlatList, Modal, PanResponder, P
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SnoozeBrand } from '../components/SnoozeBrand';
+import { WeekdayDots } from '../components/WeekdayDots';
+import { useWeekStart } from '../context/WeekStartContext';
 import { loadSleepRecord, saveSleepRecord } from '../data/sleepRecords';
+import { deleteNap, loadNaps, saveNap, type Nap } from '../data/naps';
+import { dayHeaderTitle, formatMonthDay, weekdayIndex } from '../domain/dates';
 import { daysBetween, formatSleepTime, localDateKey, parseSleepTime, shiftDate, sleepDuration, type SleepRecord } from '../domain/sleep';
 import { theme } from '../theme/tokens';
 
@@ -61,36 +65,85 @@ function SleepEditor({ date, existing, db, onClose, onSaved }: { date: string; e
   </Modal>;
 }
 
+function NapEditor({ date, existing, db, onClose, onSaved }: { date: string; existing: Nap | null; db: SQLiteDatabase; onClose: () => void; onSaved: () => void }) {
+  const [start, setStart] = useState<TimeFields>(() => existing ? toFields(existing.startMinutes) : { hour: '', minute: '', period: 'PM' });
+  const [end, setEnd] = useState<TimeFields>(() => existing ? toFields(existing.endMinutes) : { hour: '', minute: '', period: 'PM' });
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    if (saving) return;
+    const startMinutes = parseSleepTime(start.hour, start.minute, start.period);
+    const endMinutes = parseSleepTime(end.hour, end.minute, end.period);
+    if (date > localDateKey(new Date())) { setError('Naps cannot be logged for a future date.'); return; }
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) { setError('Enter valid times on the same day, with the end after the start.'); return; }
+    const duration = sleepDuration({ date, bedtimeMinutes: startMinutes, wakeMinutes: endMinutes });
+    if (duration === null) { setError('These times are not valid on this date. Check daylight saving time.'); return; }
+    setSaving(true); setError('');
+    try {
+      const naps = await loadNaps(db, date);
+      if (naps.some(nap => nap.id !== existing?.id && startMinutes < nap.endMinutes && endMinutes > nap.startMinutes)) {
+        setError('This nap overlaps another nap.'); return;
+      }
+      await saveNap(db, { date, startMinutes, endMinutes }, existing?.id); onSaved();
+    } catch { setError('Could not save your nap. Please try again.'); }
+    finally { setSaving(false); }
+  };
+  const remove = async () => {
+    if (!existing || saving) return;
+    setSaving(true); setError('');
+    try { await deleteNap(db, existing); onSaved(); }
+    catch { setError('Could not delete your nap. Please try again.'); }
+    finally { setSaving(false); }
+  };
+  return <Modal transparent animationType="fade" visible onRequestClose={() => { if (!saving) onClose(); }}>
+    <View style={styles.modalBackdrop} accessibilityViewIsModal><View style={styles.dialog}>
+      <Text accessibilityRole="header" style={styles.dialogTitle}>{existing ? 'Edit nap' : 'Log nap'}</Text>
+      <Text style={styles.dialogIntro}>Enter the start and end times on {formatMonthDay(date)}.</Text>
+      <TimeInput label="Start time" value={start} onChange={setStart} />
+      <TimeInput label="End time" value={end} onChange={setEnd} />
+      {!!error && <Text accessibilityRole="alert" style={styles.errorOnPaper}>{error}</Text>}
+      <View style={styles.dialogActions}>
+        {existing && <Pressable accessibilityRole="button" disabled={saving} onPress={() => void remove()} style={styles.cancelButton}><Text style={styles.cancelText}>Delete</Text></Pressable>}
+        <Pressable accessibilityRole="button" disabled={saving} onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: saving }} disabled={saving} onPress={() => void save()} style={styles.saveButton}><Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text></Pressable>
+      </View>
+    </View></View>
+  </Modal>;
+}
+
 const WALL_ITEM_HEIGHT = 176;
 
 function DateOverview({ date, db, refresh, onPress, compact = false }: { date: string; db: SQLiteDatabase; refresh: number; onPress: (record: SleepRecord | null) => void; compact?: boolean }) {
-  const [loaded, setLoaded] = useState<{ date: string; refresh: number; record: SleepRecord | null; error: boolean } | null>(null);
+  const [loaded, setLoaded] = useState<{ date: string; refresh: number; record: SleepRecord | null; naps: Nap[]; error: boolean } | null>(null);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true;
-    loadSleepRecord(db, date).then(record => { if (active) setLoaded({ date, refresh, record, error: false }); }).catch(() => { if (active) setLoaded({ date, refresh, record: null, error: true }); });
+    Promise.all([loadSleepRecord(db, date), loadNaps(db, date)]).then(([record, naps]) => { if (active) setLoaded({ date, refresh, record, naps, error: false }); }).catch(() => { if (active) setLoaded({ date, refresh, record: null, naps: [], error: true }); });
     return () => { active = false; };
   }, [db, date, refresh, retry]);
   const loading = !loaded || loaded.date !== date || loaded.refresh !== refresh;
   const record = loading ? null : loaded.record;
-  const duration = record ? sleepDuration(record) : null;
-  const label = formatDate(date);
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${loading ? 'loading sleep' : loaded?.error ? 'sleep could not be loaded, retry' : record && duration !== null ? `${Math.floor(duration / 60)} hours ${duration % 60} minutes, ${formatSleepTime(record.bedtimeMinutes)} to ${formatSleepTime(record.wakeMinutes)}` : 'no sleep recorded'}`} accessibilityHint={loaded?.error ? 'Retry loading' : compact ? 'Open this day' : 'Open the sleep editor'} disabled={loading} onPress={() => loaded?.error ? setRetry(value => value + 1) : onPress(record)} style={({ pressed }) => [styles.paperCard, compact && styles.wallCard, pressed && styles.pressed]}>
+  const mainDuration = record ? sleepDuration(record) : null;
+  const napDuration = loading ? 0 : loaded.naps.reduce((sum, nap) => sum + (sleepDuration({ date, bedtimeMinutes: nap.startMinutes, wakeMinutes: nap.endMinutes }) ?? 0), 0);
+  const duration = (mainDuration ?? 0) + napDuration;
+  const label = formatMonthDay(date);
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${loading ? 'loading sleep' : loaded?.error ? 'sleep could not be loaded, retry' : duration > 0 ? `${Math.floor(duration / 60)} hours ${duration % 60} minutes total, including ${napDuration} minutes of naps` : 'no sleep recorded'}`} accessibilityHint={loaded?.error ? 'Retry loading' : compact ? 'Open this day' : 'Open the sleep editor'} disabled={loading} onPress={() => loaded?.error ? setRetry(value => value + 1) : onPress(record)} style={({ pressed }) => [styles.paperCard, compact && styles.wallCard, pressed && styles.pressed]}>
     <Text style={styles.overline}>{compact ? label.toUpperCase() : 'REST OVERVIEW'}</Text>
-    {loading ? <Text style={styles.cardMessage}>Loading sleep…</Text> : loaded?.error ? <Text style={styles.cardMessage}>Could not load sleep. Tap to retry.</Text> : record && duration !== null ? <>
+    {loading ? <Text style={styles.cardMessage}>Loading sleep…</Text> : loaded?.error ? <Text style={styles.cardMessage}>Could not load sleep. Tap to retry.</Text> : duration > 0 ? <>
       <Text style={styles.bigSleep}><Text style={styles.bigSleepValue}>{Math.floor(duration / 60)}</Text><Text style={styles.bigSleepUnit}>h</Text><Text style={styles.bigSleepValue}> {duration % 60}</Text><Text style={styles.bigSleepUnit}>m</Text></Text>
-      <Text style={styles.spanLine}>{formatSleepTime(record.bedtimeMinutes)}  →  {formatSleepTime(record.wakeMinutes)}</Text>
-    </> : <><Text style={styles.cardMessage}>{record ? 'Review your sleep times' : 'Add your sleep'}</Text><Text style={styles.spanLine}>{compact ? 'No sleep recorded' : 'Tap to add or edit bedtime and wake time'}</Text></>}
+      {record && !compact && <Text style={styles.spanLine}>{formatSleepTime(record.bedtimeMinutes)}  →  {formatSleepTime(record.wakeMinutes)}</Text>}
+      <View style={styles.durationBar} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        {!!mainDuration && <View style={[styles.sleepSegment, { flex: mainDuration }]} />}
+        {napDuration > 0 && <View style={[styles.napSegment, { flex: napDuration }]} />}
+      </View>
+      {napDuration > 0 && !compact && <Text style={styles.spanLine}>Sleep {mainDuration ?? 0} min  ·  Naps {napDuration} min</Text>}
+    </> : <><Text style={styles.cardMessage}>{record ? 'Review your sleep times' : 'Add your sleep'}</Text>{compact ? <Text style={styles.spanLine}>No sleep recorded</Text> : null}</>}
   </Pressable>;
-}
-
-function formatDate(date: string): string {
-  const [year, month, day] = date.split('-').map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export function TodayScreen({ db }: { db: SQLiteDatabase }) {
   const insets = useSafeAreaInsets();
+  const { weekStartsOn } = useWeekStart();
   const [today, setToday] = useState(() => localDateKey(new Date()));
   const [selected, setSelected] = useState(today);
   const [refresh, setRefresh] = useState(0);
@@ -98,6 +151,13 @@ export function TodayScreen({ db }: { db: SQLiteDatabase }) {
   const [wallCount, setWallCount] = useState(30);
   const [wallStart, setWallStart] = useState(0);
   const [editor, setEditor] = useState<{ date: string; record: SleepRecord | null } | null>(null);
+  const [napEditor, setNapEditor] = useState<{ date: string; nap: Nap | null } | null>(null);
+  const [napList, setNapList] = useState<{ date: string; refresh: number; naps: Nap[]; error: boolean } | null>(null);
+  useEffect(() => {
+    let active = true;
+    loadNaps(db, selected).then(naps => { if (active) setNapList({ date: selected, refresh, naps, error: false }); }).catch(() => { if (active) setNapList({ date: selected, refresh, naps: [], error: true }); });
+    return () => { active = false; };
+  }, [db, selected, refresh]);
   const [reduceMotion, setReduceMotion] = useState(false);
   const listRef = useRef<FlatList<number>>(null);
   const listContainer = useRef<ComponentRef<typeof View>>(null);
@@ -210,11 +270,24 @@ export function TodayScreen({ db }: { db: SQLiteDatabase }) {
       }} />
     </View> : <Animated.View style={[styles.fill, { opacity: transition, transform: [{ translateY: transition.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }]}>
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}>
-        <View style={styles.todayRow}><Text style={styles.dateLine}>{formatDate(selected).toUpperCase()}</Text><Text style={styles.todayTitle} accessibilityRole="header">{selected === today ? 'Today' : selected === shiftDate(today, -1) ? 'Yesterday' : formatDate(selected)}</Text></View>
+        <View style={styles.todayRow}>
+          <WeekdayDots activeIndex={weekdayIndex(selected, weekStartsOn)} weekStartsOn={weekStartsOn} />
+          <Text style={styles.todayTitle} accessibilityRole="header">{dayHeaderTitle(selected, today)}</Text>
+        </View>
         <DateOverview date={selected} db={db} refresh={refresh} onPress={record => setEditor({ date: selected, record })} />
-        <Pressable accessibilityRole="button" style={({ pressed }) => [styles.napButton, pressed && styles.pressed]}><Text style={styles.napButtonText}>Log nap</Text><Text style={styles.napIcon}>◎</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Log Nap" onPress={() => setNapEditor({ date: selected, nap: null })} style={({ pressed }) => [styles.napButton, pressed && styles.pressed]}>
+          <View style={styles.napPlusIcon} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+            <View style={styles.napPlusBarH} />
+            <View style={styles.napPlusBarV} />
+          </View>
+          <Text style={styles.napButtonText}>Log Nap</Text>
+        </Pressable>
+        {napList?.date === selected && napList.refresh === refresh && (napList.error
+          ? <Pressable onPress={() => setRefresh(value => value + 1)} accessibilityRole="button"><Text style={styles.napListText}>Could not load naps. Tap to retry.</Text></Pressable>
+          : napList.naps.map(nap => <Pressable key={nap.id} accessibilityRole="button" accessibilityLabel={`Edit nap, ${formatSleepTime(nap.startMinutes)} to ${formatSleepTime(nap.endMinutes)}`} onPress={() => setNapEditor({ date: selected, nap })} style={styles.napRow}><Text style={styles.napListText}>Nap · {formatSleepTime(nap.startMinutes)} → {formatSleepTime(nap.endMinutes)}</Text><Text style={styles.napListText}>Edit</Text></Pressable>))}
       </ScrollView>
     </Animated.View>}
+    {napEditor && <NapEditor key={`${napEditor.date}-${napEditor.nap?.id ?? 'new'}`} date={napEditor.date} existing={napEditor.nap} db={db} onClose={() => setNapEditor(null)} onSaved={() => { setNapEditor(null); setRefresh(value => value + 1); }} />}
     {editor && <SleepEditor key={editor.date} date={editor.date} existing={editor.record} db={db} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); setRefresh(value => value + 1); }} />}
   </View>;
 }
@@ -229,9 +302,8 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: 22, maxWidth: 520, width: '100%', alignSelf: 'center', gap: 18 },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.buttonFill },
-  todayRow: { marginTop: 8, alignItems: 'center', width: '100%' },
-  dateLine: { color: theme.overlineAccent, fontSize: 10, fontWeight: '700', letterSpacing: 1.2, textAlign: 'center' },
-  todayTitle: { color: theme.textOnNight, fontSize: 38, fontWeight: '700', letterSpacing: -1.2, marginTop: 6, textAlign: 'center' },
+  todayRow: { marginTop: 8, alignItems: 'center', width: '100%', gap: 6 },
+  todayTitle: { color: theme.textOnNight, fontSize: 38, fontWeight: '700', letterSpacing: -1.2, textAlign: 'center' },
   paperCard: { backgroundColor: theme.card, borderRadius: 24, padding: 22, gap: 10 },
   overline: { color: theme.textOnPaperMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1.2 },
   bigSleep: { fontSize: 40, lineHeight: 44 },
@@ -239,10 +311,17 @@ const styles = StyleSheet.create({
   bigSleepUnit: { color: theme.textOnPaperFaint, fontSize: 28, fontWeight: '600', letterSpacing: -0.5 },
   cardMessage: { color: theme.textOnPaper, fontSize: 24, fontWeight: '700' },
   spanLine: { color: theme.textOnPaperMuted, fontSize: 14 },
+  durationBar: { height: 8, flexDirection: 'row', borderRadius: 4, overflow: 'hidden' },
+  sleepSegment: { backgroundColor: theme.textOnPaper },
+  napSegment: { backgroundColor: '#8098d4' },
+  napRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8 },
+  napListText: { color: theme.textOnNight, fontSize: 14 },
   retry: { color: theme.link, fontSize: 14 },
-  napButton: { minHeight: 54, borderRadius: 27, backgroundColor: theme.buttonFill, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 22 },
+  napButton: { minHeight: 54, borderRadius: 27, backgroundColor: theme.buttonFill, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 22 },
+  napPlusIcon: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
+  napPlusBarH: { position: 'absolute', width: 14, height: 2, borderRadius: 1, backgroundColor: theme.buttonText },
+  napPlusBarV: { position: 'absolute', width: 2, height: 14, borderRadius: 1, backgroundColor: theme.buttonText },
   napButtonText: { color: theme.buttonText, fontSize: 16, fontWeight: '700' },
-  napIcon: { color: theme.buttonText, fontSize: 18 },
   pressed: { opacity: 0.85 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 },
   dialog: { width: '100%', maxWidth: 420, alignSelf: 'center', backgroundColor: theme.card, borderRadius: 24, padding: 22, gap: 16 },

@@ -36,7 +36,7 @@ export async function runAndroidDatabaseCheck(): Promise<string> {
     const { db, cipherVersion } = await openEncryptedDatabase(name, key);
     try {
       const version = await db.getFirstAsync<{ version: number }>('SELECT MAX(version) AS version FROM schema_migrations');
-      check(version?.version === 2, 'Migration v2 was not recorded');
+      check(version?.version === 3, 'Migration v3 was not recorded');
       await db.execAsync('CREATE TABLE verification_fixture (value TEXT NOT NULL)');
       await db.runAsync('INSERT INTO verification_fixture (value) VALUES (?)', marker);
     } finally { await db.closeAsync(); }
@@ -49,7 +49,7 @@ export async function runAndroidDatabaseCheck(): Promise<string> {
     const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM verification_fixture');
     const version = await db.getFirstAsync<{ count: number; version: number }>('SELECT COUNT(*) AS count, MAX(version) AS version FROM schema_migrations');
     check(row?.value === marker, 'Persisted fixture could not be read');
-    check(version?.count === 2 && version.version === 2, 'Migration was not idempotent');
+    check(version?.count === 3 && version.version === 3, 'Migration was not idempotent');
   } finally { await db.closeAsync(); }
   await expectUnreadable();
   await SecureStore.deleteItemAsync(keyName);

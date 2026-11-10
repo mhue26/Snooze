@@ -67,19 +67,16 @@ test('fails closed if SQLCipher is absent and does not write the database', asyn
   expect(db.closeAsync).toHaveBeenCalledTimes(1);
 });
 
-test('applies v1 and v2 on a fresh database, only v2 on v1, and neither on v2', async () => {
+test('applies pending migrations without repeating completed versions', async () => {
   const db = fakeDb();
-  db.getFirstAsync.mockResolvedValueOnce({ cipher_version: 'test' }).mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ version: null });
-  await openEncryptedDatabase('fixture', key);
+  for (const [version, expected] of [[null, 3], [1, 2], [2, 1], [3, 0]] as const) {
+    db.execSync.mockClear();
+    db.getFirstAsync.mockResolvedValueOnce({ cipher_version: 'test' }).mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ version });
+    await openEncryptedDatabase('fixture', key);
+    expect(db.execSync).toHaveBeenCalledTimes(expected);
+    if (version === 2) expect(db.execSync.mock.calls[0][0]).toContain('CREATE TABLE IF NOT EXISTS naps');
+  }
   expect(db.execAsync).toHaveBeenCalledWith(`PRAGMA key = "x'${key}'";`);
-  expect(db.execSync).toHaveBeenCalledTimes(2);
-  db.getFirstAsync.mockResolvedValueOnce({ cipher_version: 'test' }).mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ version: 1 });
-  await openEncryptedDatabase('fixture', key);
-  expect(db.execSync).toHaveBeenCalledTimes(3);
-  expect(db.execSync.mock.calls[2][0]).toContain('CREATE TABLE IF NOT EXISTS sleep_records');
-  db.getFirstAsync.mockResolvedValueOnce({ cipher_version: 'test' }).mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ version: 2 });
-  await openEncryptedDatabase('fixture', key);
-  expect(db.execSync).toHaveBeenCalledTimes(3);
 });
 
 test('rejects an invalid stored key without replacing it', async () => {

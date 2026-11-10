@@ -1,9 +1,9 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, PanResponder, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PlaceholderScreen } from '../components/PlaceholderScreen';
-import { OpenSourceNoticesScreen } from '../screens/OpenSourceNoticesScreen';
+import { DataScreen } from '../screens/DataScreen';
 import { TodayScreen } from '../screens/TodayScreen';
 import { theme } from '../theme/tokens';
 
@@ -12,23 +12,6 @@ type TabIndex = 0 | 1 | 2 | 3;
 
 function Log() { return <PlaceholderScreen title="Log" subtitle="Your sleep log will appear here." />; }
 function Plan() { return <PlaceholderScreen title="Plan" subtitle="Your sleep plans will appear here." />; }
-
-function Data() {
-  const [showNotices, setShowNotices] = useState(false);
-  if (showNotices) {
-    return (
-      <View style={styles.fill}>
-        <Pressable accessibilityRole="button" onPress={() => setShowNotices(false)} style={styles.back}><Text style={styles.link}>← Data</Text></Pressable>
-        <OpenSourceNoticesScreen />
-      </View>
-    );
-  }
-  return (
-    <PlaceholderScreen title="Data" subtitle="Settings and data controls will appear here.">
-      <Pressable accessibilityRole="button" onPress={() => setShowNotices(true)} style={styles.row}><Text style={styles.link}>Open source notices  →</Text></Pressable>
-    </PlaceholderScreen>
-  );
-}
 
 function TabIcon({ index, active }: { index: TabIndex; active: boolean }) {
   const color = active ? theme.buttonText : theme.tabInactive;
@@ -111,7 +94,7 @@ export function RootNavigator({ db }: { db: SQLiteDatabase }) {
   }), [index, navigate]);
 
   const islandVisible = visible || screenReaderEnabled;
-  const pages = [<Log key="Log" />, <TodayScreen key="Today" db={db} />, <Plan key="Plan" />, <Data key="Data" />];
+  const pages = [<Log key="Log" />, <TodayScreen key="Today" db={db} />, <Plan key="Plan" />, <DataScreen key="Data" />];
 
   return (
     <View style={styles.container} onLayout={event => setWidth(event.nativeEvent.layout.width)}>
@@ -139,10 +122,6 @@ export function RootNavigator({ db }: { db: SQLiteDatabase }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.screen },
-  fill: { flex: 1, backgroundColor: theme.screen },
-  back: { paddingHorizontal: 28, paddingTop: 24 },
-  row: { paddingVertical: 20, marginTop: 20, borderTopWidth: 1, borderColor: theme.borderOnNight },
-  link: { color: theme.link, fontSize: 16, fontWeight: '600' },
   pager: { flex: 1, overflow: 'hidden' },
   pages: { flex: 1, flexDirection: 'row' },
   island: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', padding: 6, gap: 2, borderRadius: 28, backgroundColor: theme.tabBar, borderWidth: 1, borderColor: theme.borderOnNight, elevation: 8, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
