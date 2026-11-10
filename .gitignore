@@ -12,3 +12,6 @@ coverage/
 ios/
 android/
 *.tsbuildinfo
+
+# Local logo explorations (not shipped in repo)
+assets/snooze-logo-*.png

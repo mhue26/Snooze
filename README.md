@@ -32,6 +32,18 @@ The display name, URL scheme and application identifiers are provisional; replac
 
 `src/domain` contains platform-independent logic; `data`, `integrations`, `portability`, and `screens` reserve boundaries for later work. `modules` is reserved for native modules. The [project guide](Snooze-Project-Guide.md) and [implementation plan](plan.md) describe future stages, not completed features.
 
-## Stage 0 database verification
+## Android encrypted database verification
 
-SQLCipher requires a custom development build; Expo Go cannot verify it. After changing native plugins, regenerate the corresponding native project with `npx expo prebuild --platform ios` or `npx expo prebuild --platform android`, then rebuild with `npm run ios` or `npm run android` and start Metro with `npm start`. Prebuild can regenerate native directories; preserve any manual native changes first. On a simulator or device, open Today and confirm the “Encrypted DB: OK” status includes a SQLCipher version. The app checks `PRAGMA cipher_version` and reads the keyed database before displaying this status. Visit Data → Open source notices to check the attribution stub. If opening fails, the app displays an error and does not erase the database. A device-bound Secure Store key may not survive transfer or restore; backup and recovery are not implemented yet. This smoke test does not independently prove that an unkeyed connection cannot read the file.
+SQLCipher requires a custom development or release build; Expo Go cannot verify it. The `expo-sqlite` config plugin enables SQLCipher. If native plugin settings change, regenerate the Android project only after preserving any manual native changes, then rebuild. A JavaScript reload alone cannot change the native SQLite library.
+
+To run the disposable Android integration check, build and install a development client on the intended Android device, then start Metro with:
+
+```sh
+EXPO_PUBLIC_SQLCIPHER_TEST=1 npx expo start --dev-client
+```
+
+Open that server in the development client. Phase 1 creates a separate test database and SecureStore keys, checks SQLCipher and the database migrations, and writes a marker. Fully stop the app process and reopen it against the same server for phase 2. A `PHASE 2 PASS` message confirms that the stored key and marker survived restart, migration did not repeat, the missing-key guard rejected replacement, and fresh unkeyed and wrong-key connections could not read the database. The fixture is removed after phase 2. The test never uses the production database or its key. If a check fails, preserve the test fixture for diagnosis; do not clear the app's data as a troubleshooting shortcut. Restart Metro without the test environment variable to run the normal app.
+
+For an independent check, copy the closed disposable fixture after phase 1 from a debuggable build and attempt to read it with ordinary SQLite; it should fail with `file is not a database`. A `cipher_version` result alone proves SQLCipher is present in the binary, not that a specific database is encrypted. Repeat verification for each native build configuration that needs assurance.
+
+The current Expo SecureStore Android backup rules include shared preferences except SecureStore and do not include the SQLite file directory. Consequently the device-bound key and database are not available as a recoverable pair after uninstall or transfer; backup and recovery are not implemented. If backup rules change, preserve this exclusion or implement an explicit secure recovery design. Missing or invalid keys fail without deleting the database. The open-source notices stub is retained in the project but is not currently exposed in the app.

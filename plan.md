@@ -1,16 +1,12 @@
+# My Plan
+- Verify the completion of Stage 0
+- Sort out a website landing page
+- Sort out marketing materials
+- Work out how to implement sleep debt tracker
+
 ## Stage 0 — Repo and native shell
-
-Goal: empty repo becomes a runnable **Expo dev build** (not Expo Go) with the folders and hooks you will extend in Stage 1.
-
-- Initialise monolith app: React Native, Expo, TypeScript, custom development client.
-- Layout: `src/domain/`, `src/data/`, `src/screens/`, `src/components/`, `src/integrations/`, `src/portability/`, `modules/` for native extensions when needed.
-- Navigation skeleton: tab or stack placeholders for Log, Today, History, Plan, Data.
 - Encrypted SQLite (SQLCipher via supported Expo integration): open/close DB, migration v1, prove encryption is on in the built binary.
 - Device-bound encryption key: generate per install, store in platform secure storage, wire into SQLCipher.
-- `LICENSE` + in-app **Open source notices** stub (SQLCipher attribution required).
-- Domain test runner in CI (typecheck, lint, unit tests only); synthetic fixtures only.
-
-**Done when:** dev client installs on a device/emulator, empty encrypted DB opens, navigation shell renders, CI runs domain tests.
 
 ---
 
