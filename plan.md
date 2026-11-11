@@ -1,14 +1,7 @@
 # My Plan
-- Verify the completion of Stage 0
 - Sort out a website landing page
 - Sort out marketing materials
 - Work out how to implement sleep debt tracker
-
-## Stage 0 — Repo and native shell
-- Encrypted SQLite (SQLCipher via supported Expo integration): open/close DB, migration v1, prove encryption is on in the built binary.
-- Device-bound encryption key: generate per install, store in platform secure storage, wire into SQLCipher.
-
----
 
 ## Stage 1 — First usable diary (offline, no account)
 

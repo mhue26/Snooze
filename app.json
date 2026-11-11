@@ -20,7 +20,21 @@
           "useSQLCipher": true
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Snooze to use Face ID to confirm deletion of device data."
+        }
+      ],
+      "expo-sharing",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Snooze to use your location to calculate sunrise and sunset for your sleep overview."
+        }
+      ],
+      "expo-font"
     ]
   }
 }

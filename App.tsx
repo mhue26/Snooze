@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
+import { useFonts } from 'expo-font';
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
+import { PlusJakartaSans_700Bold } from '@expo-google-fonts/plus-jakarta-sans';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { openDatabase, OpenDatabase } from './src/data/database';
 import { RootNavigator } from './src/navigation/RootNavigator';
-import { palette, theme } from './src/theme/tokens';
+import { palette, theme, typography } from './src/theme/tokens';
 import { runAndroidDatabaseCheck } from './src/testing/androidDatabaseCheck';
 import { WeekStartProvider } from './src/context/WeekStartContext';
 
@@ -22,6 +25,8 @@ function DatabaseVerification() {
 }
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, PlusJakartaSans_700Bold });
+  if (!fontsLoaded && !fontError) return <View style={styles.loading}><ActivityIndicator color={palette.action} /></View>;
   if (__DEV__ && process.env.EXPO_PUBLIC_SQLCIPHER_TEST === '1') return <DatabaseVerification />;
   return <MainApp />;
 }
@@ -52,4 +57,4 @@ function MainApp() {
     </SafeAreaProvider>
   );
 }
-const styles = StyleSheet.create({ loading: { flex: 1, backgroundColor: theme.screen, justifyContent: 'center', padding: 28, gap: 16 }, message: { color: theme.textOnNightMuted, textAlign: 'center', lineHeight: 22 } });
+const styles = StyleSheet.create({ loading: { flex: 1, backgroundColor: theme.screen, justifyContent: 'center', padding: 28, gap: 16 }, message: { fontFamily: typography.body, color: theme.textOnNightMuted, textAlign: 'center', lineHeight: 22 } });

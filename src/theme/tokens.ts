@@ -43,4 +43,14 @@ export const theme = {
   progressOn: palette.night,
   dotActive: palette.glow,
   dotInactive: withAlpha(palette.paper, 0.3),
+  dotFuture: withAlpha(palette.paper, 0.14),
 };
+
+/** Bundled Google Fonts, named by purpose and weight. */
+export const typography = {
+  body: 'Inter_400Regular',
+  bodyMedium: 'Inter_500Medium',
+  bodySemibold: 'Inter_600SemiBold',
+  bodyBold: 'Inter_700Bold',
+  heading: 'PlusJakartaSans_700Bold',
+} as const;

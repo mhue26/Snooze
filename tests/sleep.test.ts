@@ -1,7 +1,7 @@
 import { expect, jest, test } from '@jest/globals';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { loadSleepRecord, saveSleepRecord } from '../src/data/sleepRecords';
-import { daysBetween, formatSleepTime, localDateKey, parseSleepTime, shiftDate, sleepDuration } from '../src/domain/sleep';
+import { daysBetween, formatSleepTime, localDateKey, parseClockDigits, parseSleepTime, shiftDate, sleepDuration } from '../src/domain/sleep';
 
 test('parses and formats 12-hour time including noon and midnight', () => {
   expect(parseSleepTime('12', '00', 'AM')).toBe(0);
@@ -9,6 +9,8 @@ test('parses and formats 12-hour time including noon and midnight', () => {
   expect(parseSleepTime('11', '15', 'PM')).toBe(1395);
   expect(formatSleepTime(0)).toBe('12:00 AM');
   expect(formatSleepTime(775)).toBe('12:55 PM');
+  expect(formatSleepTime(0, '24h')).toBe('00:00');
+  expect(formatSleepTime(775, '24h')).toBe('12:55');
   for (const [h, m] of [['', '0'], ['0', '00'], ['13', '00'], ['1', '60'], ['1', '-1']]) expect(parseSleepTime(h, m, 'AM')).toBeNull();
 });
 
@@ -53,4 +55,17 @@ test('navigates local calendar days across months, years and daylight saving', (
   expect(shiftDate('2024-03-01', -1)).toBe('2024-02-29');
   expect(daysBetween('2026-03-07', '2026-03-09')).toBe(2);
   expect(daysBetween('2025-12-31', '2026-01-01')).toBe(1);
+});
+
+
+test('parses complete time entries in the chosen clock format', () => {
+  expect(parseClockDigits('0000', '24h', 'AM')).toBe(0);
+  expect(parseClockDigits('2359', '24h', 'PM')).toBe(1439);
+  expect(parseClockDigits('2400', '24h', 'AM')).toBeNull();
+  expect(parseClockDigits('1260', '24h', 'AM')).toBeNull();
+  expect(parseClockDigits('1200', '12h', 'AM')).toBe(0);
+  expect(parseClockDigits('1200', '12h', 'PM')).toBe(720);
+  expect(parseClockDigits('0130', '12h', 'PM')).toBe(810);
+  expect(parseClockDigits('0030', '12h', 'AM')).toBeNull();
+  expect(parseClockDigits('930', '12h', 'AM')).toBeNull();
 });

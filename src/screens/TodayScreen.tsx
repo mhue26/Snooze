@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
-import { AccessibilityInfo, Animated, AppState, FlatList, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AccessibilityInfo, Animated, AppState, Easing, FlatList, PanResponder, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { LinearGradient } from 'expo-linear-gradient';
+import { sleepSunColors } from '../domain/sunlight';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { SnoozeBrand } from '../components/SnoozeBrand';
 import { WeekdayDots } from '../components/WeekdayDots';
-import { useWeekStart } from '../context/WeekStartContext';
+import { useSunriseSunset, useTimeFormat, useWeekStart } from '../context/WeekStartContext';
 import { loadSleepRecord, saveSleepRecord } from '../data/sleepRecords';
 import { deleteNap, loadNaps, saveNap, type Nap } from '../data/naps';
 import { dayHeaderTitle, formatMonthDay, weekdayIndex } from '../domain/dates';
-import { daysBetween, formatSleepTime, localDateKey, parseSleepTime, shiftDate, sleepDuration, type SleepRecord } from '../domain/sleep';
-import { theme } from '../theme/tokens';
+import { daysBetween, formatDurationClock, formatSleepTime, localDateKey, parseClockDigits, parseSleepTime, shiftDate, sleepDuration, type SleepRecord, type TimeFormat } from '../domain/sleep';
+import { calculateSleepDebt, DEBT_WINDOW_DAYS } from '../domain/sleepDebt';
+import { targetSleepDurationMinutes } from '../domain/targetSleep';
+import { theme, typography } from '../theme/tokens';
 
 type TimeFields = { hour: string; minute: string; period: 'AM' | 'PM' };
 function toFields(value: number): TimeFields {
@@ -21,25 +24,38 @@ function TimeInput({ label, value, onChange }: { label: string; value: TimeField
   return <View style={styles.timeGroup}>
     <Text style={styles.fieldLabel}>{label}</Text>
     <View style={styles.timeRow}>
-      <TextInput accessibilityLabel={`${label} hour`} value={value.hour} onChangeText={hour => onChange({ ...value, hour })} keyboardType="number-pad" maxLength={2} placeholder="HH" placeholderTextColor={theme.textOnPaperFaint} style={styles.input} />
+      <TextInput accessibilityLabel={`${label} hour`} value={value.hour} onChangeText={hour => onChange({ ...value, hour })} keyboardType="number-pad" maxLength={2} placeholder="HH" placeholderTextColor={theme.textOnPaperFaint} selectionColor={theme.buttonFill} cursorColor={theme.buttonFill} style={styles.input} />
       <Text style={styles.colon}>:</Text>
-      <TextInput accessibilityLabel={`${label} minute`} value={value.minute} onChangeText={minute => onChange({ ...value, minute })} keyboardType="number-pad" maxLength={2} placeholder="MM" placeholderTextColor={theme.textOnPaperFaint} style={styles.input} />
+      <TextInput accessibilityLabel={`${label} minute`} value={value.minute} onChangeText={minute => onChange({ ...value, minute })} keyboardType="number-pad" maxLength={2} placeholder="MM" placeholderTextColor={theme.textOnPaperFaint} selectionColor={theme.buttonFill} cursorColor={theme.buttonFill} style={styles.input} />
       <View style={styles.periods}>{(['AM', 'PM'] as const).map(period => <Pressable key={period} accessibilityRole="radio" accessibilityLabel={`${label} ${period}`} accessibilityState={{ checked: value.period === period }} onPress={() => onChange({ ...value, period })} style={[styles.period, value.period === period && styles.selectedPeriod]}><Text style={styles.periodText}>{period}</Text></Pressable>)}</View>
     </View>
   </View>;
 }
 
+type ClockValue = { digits: string; period: 'AM' | 'PM' };
+function clockValue(minutes: number | undefined, format: TimeFormat, fallback: 'AM' | 'PM'): ClockValue {
+  if (minutes === undefined) return { digits: '', period: fallback };
+  const hours = Math.floor(minutes / 60);
+  const displayHour = format === '12h' ? hours % 12 || 12 : hours;
+  return { digits: `${String(displayHour).padStart(2, '0')}${String(minutes % 60).padStart(2, '0')}`, period: hours < 12 ? 'AM' : 'PM' };
+}
+function clockDisplay(digits: string): string {
+  return digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
+}
+
 function SleepEditor({ date, existing, db, onClose, onSaved }: { date: string; existing: SleepRecord | null; db: SQLiteDatabase; onClose: () => void; onSaved: (record: SleepRecord) => void }) {
-  const [bed, setBed] = useState<TimeFields>(() => existing ? toFields(existing.bedtimeMinutes) : { hour: '', minute: '', period: 'PM' });
-  const [wake, setWake] = useState<TimeFields>(() => existing ? toFields(existing.wakeMinutes) : { hour: '', minute: '', period: 'AM' });
+  const { timeFormat } = useTimeFormat();
+  const [bed, setBed] = useState(() => clockValue(existing?.bedtimeMinutes, timeFormat, 'PM'));
+  const [wake, setWake] = useState(() => clockValue(existing?.wakeMinutes, timeFormat, 'AM'));
+  const wakeRef = useRef<ComponentRef<typeof TextInput>>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const save = async () => {
     if (saving) return;
     if (date > localDateKey(new Date())) { setError('Sleep cannot be logged for a future date.'); return; }
-    const bedtimeMinutes = parseSleepTime(bed.hour, bed.minute, bed.period);
-    const wakeMinutes = parseSleepTime(wake.hour, wake.minute, wake.period);
-    if (bedtimeMinutes === null || wakeMinutes === null) { setError('Enter a valid hour and minute for both times.'); return; }
+    const bedtimeMinutes = parseClockDigits(bed.digits, timeFormat, bed.period);
+    const wakeMinutes = parseClockDigits(wake.digits, timeFormat, wake.period);
+    if (bedtimeMinutes === null || wakeMinutes === null) { setError(timeFormat === '24h' ? 'Enter valid times from 00:00 to 23:59.' : 'Enter valid times from 01:00 to 12:59.'); return; }
     if (bedtimeMinutes === wakeMinutes) { setError('Bedtime and wake time must be different.'); return; }
     const record = { date, bedtimeMinutes, wakeMinutes };
     if (sleepDuration(record) === null) { setError('These times are not valid on this date. Check daylight saving time.'); return; }
@@ -48,21 +64,24 @@ function SleepEditor({ date, existing, db, onClose, onSaved }: { date: string; e
     catch { setError('Could not save your sleep times. Please try again.'); }
     finally { setSaving(false); }
   };
-  return <Modal transparent animationType="fade" visible onRequestClose={() => { if (!saving) onClose(); }}>
-    <View style={styles.modalBackdrop} accessibilityViewIsModal>
-      <View style={styles.dialog}>
-        <Text accessibilityRole="header" style={styles.dialogTitle}>Edit sleep</Text>
-        <Text style={styles.dialogIntro}>Enter the sleep period ending on the selected date.</Text>
-        <TimeInput label="Bedtime" value={bed} onChange={setBed} />
-        <TimeInput label="Wake time" value={wake} onChange={setWake} />
-        {!!error && <Text accessibilityRole="alert" style={styles.errorOnPaper}>{error}</Text>}
-        <View style={styles.dialogActions}>
-          <Pressable accessibilityRole="button" accessibilityState={{ disabled: saving }} disabled={saving} onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityState={{ disabled: saving }} disabled={saving} onPress={() => void save()} style={[styles.saveButton, saving && styles.pressed]}><Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text></Pressable>
-        </View>
-      </View>
+  const field = (label: string, value: ClockValue, setValue: (value: ClockValue) => void, isBed: boolean) => <View style={styles.clockGroup}>
+    <Text style={styles.fieldLabel}>{label}</Text>
+    <TextInput ref={isBed ? undefined : wakeRef} accessibilityLabel={`${label}, ${timeFormat === '24h' ? '24 hour' : '12 hour'} time`} accessibilityHint="Enter four digits for hours and minutes" value={clockDisplay(value.digits)} autoFocus={isBed} selectTextOnFocus={!!existing} keyboardType="number-pad" maxLength={5} placeholder="HH:MM" placeholderTextColor={theme.textOnPaperFaint} selectionColor={theme.buttonFill} cursorColor={theme.buttonFill} style={styles.clockInput} onChangeText={text => {
+      let digits = text.replace(/\D/g, '').slice(0, 4);
+      if (text.length < clockDisplay(value.digits).length && digits === value.digits) digits = digits.slice(0, -1);
+      setValue({ ...value, digits });
+      if (isBed && value.digits.length < 4 && digits.length === 4) wakeRef.current?.focus();
+    }} />
+    {timeFormat === '12h' && <View accessibilityRole="radiogroup" accessibilityLabel={`${label} period`} style={styles.clockPeriods}>{(['AM', 'PM'] as const).map(period => <Pressable key={period} accessibilityRole="radio" accessibilityLabel={`${label} ${period}`} accessibilityState={{ checked: value.period === period }} onPress={() => setValue({ ...value, period })} style={[styles.clockPeriod, value.period === period && styles.selectedPeriod]}><Text style={styles.periodText}>{period}</Text></Pressable>)}</View>}
+  </View>;
+  return <View style={styles.sleepEditor}>
+    <View style={styles.clockFields}>{field('Bedtime', bed, setBed, true)}{field('Wake time', wake, setWake, false)}</View>
+    {!!error && <Text accessibilityRole="alert" style={styles.errorOnPaper}>{error}</Text>}
+    <View style={styles.dialogActions}>
+      <Pressable accessibilityRole="button" accessibilityState={{ disabled: saving }} disabled={saving} onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel</Text></Pressable>
+      <Pressable accessibilityRole="button" accessibilityState={{ disabled: saving }} disabled={saving} onPress={() => void save()} style={[styles.saveButton, saving && styles.pressed]}><Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text></Pressable>
     </View>
-  </Modal>;
+  </View>;
 }
 
 function NapEditor({ date, existing, db, onClose, onSaved }: { date: string; existing: Nap | null; db: SQLiteDatabase; onClose: () => void; onSaved: () => void }) {
@@ -95,8 +114,7 @@ function NapEditor({ date, existing, db, onClose, onSaved }: { date: string; exi
     catch { setError('Could not delete your nap. Please try again.'); }
     finally { setSaving(false); }
   };
-  return <Modal transparent animationType="fade" visible onRequestClose={() => { if (!saving) onClose(); }}>
-    <View style={styles.modalBackdrop} accessibilityViewIsModal><View style={styles.dialog}>
+  return <View style={styles.inlineEditor}>
       <Text accessibilityRole="header" style={styles.dialogTitle}>{existing ? 'Edit nap' : 'Log nap'}</Text>
       <Text style={styles.dialogIntro}>Enter the start and end times on {formatMonthDay(date)}.</Text>
       <TimeInput label="Start time" value={start} onChange={setStart} />
@@ -107,68 +125,247 @@ function NapEditor({ date, existing, db, onClose, onSaved }: { date: string; exi
         <Pressable accessibilityRole="button" disabled={saving} onPress={onClose} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel</Text></Pressable>
         <Pressable accessibilityRole="button" accessibilityState={{ disabled: saving }} disabled={saving} onPress={() => void save()} style={styles.saveButton}><Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text></Pressable>
       </View>
-    </View></View>
-  </Modal>;
+  </View>;
 }
 
 const WALL_ITEM_HEIGHT = 176;
+const TIMELINE_VIEWABILITY = { itemVisiblePercentThreshold: 45 };
 
-function DateOverview({ date, db, refresh, onPress, compact = false }: { date: string; db: SQLiteDatabase; refresh: number; onPress: (record: SleepRecord | null) => void; compact?: boolean }) {
+const SLEEP_EDITOR_MS = 220;
+
+function DateOverview({ date, db, refresh, onPress, compact = false, location, onDataChanged }: { date: string; db: SQLiteDatabase; refresh: number; onPress: (record: SleepRecord | null) => void; compact?: boolean; location: { latitude: number; longitude: number } | null; onDataChanged?: () => void }) {
+  const { timeFormat } = useTimeFormat();
   const [loaded, setLoaded] = useState<{ date: string; refresh: number; record: SleepRecord | null; naps: Nap[]; error: boolean } | null>(null);
   const [retry, setRetry] = useState(0);
+  const [editingSleep, setEditingSleep] = useState(false);
+  const [editingNap, setEditingNap] = useState<Nap | 'new' | null>(null);
+  const [localRefresh, setLocalRefresh] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const sleepEditorAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    let active = true;
+    AccessibilityInfo.isReduceMotionEnabled().then(enabled => { if (active) setReduceMotion(enabled); }).catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => { active = false; subscription.remove(); };
+  }, []);
+
+  const openSleepEditor = useCallback(() => {
+    setEditingSleep(true);
+    if (reduceMotion) {
+      sleepEditorAnim.setValue(1);
+      return;
+    }
+    sleepEditorAnim.setValue(0);
+    Animated.timing(sleepEditorAnim, {
+      toValue: 1,
+      duration: SLEEP_EDITOR_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [reduceMotion, sleepEditorAnim]);
+
+  const closeSleepEditor = useCallback(() => {
+    if (reduceMotion) {
+      sleepEditorAnim.setValue(0);
+      setEditingSleep(false);
+      return;
+    }
+    Animated.timing(sleepEditorAnim, {
+      toValue: 0,
+      duration: SLEEP_EDITOR_MS * 0.85,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setEditingSleep(false);
+    });
+  }, [reduceMotion, sleepEditorAnim]);
   useEffect(() => {
     let active = true;
     Promise.all([loadSleepRecord(db, date), loadNaps(db, date)]).then(([record, naps]) => { if (active) setLoaded({ date, refresh, record, naps, error: false }); }).catch(() => { if (active) setLoaded({ date, refresh, record: null, naps: [], error: true }); });
     return () => { active = false; };
-  }, [db, date, refresh, retry]);
+  }, [db, date, refresh, retry, localRefresh]);
   const loading = !loaded || loaded.date !== date || loaded.refresh !== refresh;
   const record = loading ? null : loaded.record;
   const mainDuration = record ? sleepDuration(record) : null;
   const napDuration = loading ? 0 : loaded.naps.reduce((sum, nap) => sum + (sleepDuration({ date, bedtimeMinutes: nap.startMinutes, wakeMinutes: nap.endMinutes }) ?? 0), 0);
   const duration = (mainDuration ?? 0) + napDuration;
   const label = formatMonthDay(date);
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${loading ? 'loading sleep' : loaded?.error ? 'sleep could not be loaded, retry' : duration > 0 ? `${Math.floor(duration / 60)} hours ${duration % 60} minutes total, including ${napDuration} minutes of naps` : 'no sleep recorded'}`} accessibilityHint={loaded?.error ? 'Retry loading' : compact ? 'Open this day' : 'Open the sleep editor'} disabled={loading} onPress={() => loaded?.error ? setRetry(value => value + 1) : onPress(record)} style={({ pressed }) => [styles.paperCard, compact && styles.wallCard, pressed && styles.pressed]}>
-    <Text style={styles.overline}>{compact ? label.toUpperCase() : 'REST OVERVIEW'}</Text>
-    {loading ? <Text style={styles.cardMessage}>Loading sleep…</Text> : loaded?.error ? <Text style={styles.cardMessage}>Could not load sleep. Tap to retry.</Text> : duration > 0 ? <>
-      <Text style={styles.bigSleep}><Text style={styles.bigSleepValue}>{Math.floor(duration / 60)}</Text><Text style={styles.bigSleepUnit}>h</Text><Text style={styles.bigSleepValue}> {duration % 60}</Text><Text style={styles.bigSleepUnit}>m</Text></Text>
-      {record && !compact && <Text style={styles.spanLine}>{formatSleepTime(record.bedtimeMinutes)}  →  {formatSleepTime(record.wakeMinutes)}</Text>}
-      <View style={styles.durationBar} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        {!!mainDuration && <View style={[styles.sleepSegment, { flex: mainDuration }]} />}
-        {napDuration > 0 && <View style={[styles.napSegment, { flex: napDuration }]} />}
+  const sleepMinutes = mainDuration ?? 0;
+  const summary = (
+    <>
+      {compact ? <Text style={styles.overline}>{label.toUpperCase()}</Text> : null}
+      {!compact && !loading && !loaded?.error && !record && duration > 0 && <Text style={styles.cardMessage}>Add your sleep</Text>}
+      {loading ? <Text style={styles.cardMessage}>Loading sleep…</Text> : loaded?.error ? <Text style={styles.cardMessage}>Could not load sleep.</Text> : duration > 0 ? <>
+        <Text style={styles.bigSleep}>
+          <Text style={styles.bigSleepValue}>{formatDurationClock(sleepMinutes)}</Text>
+          {napDuration > 0 && (
+            <Text style={styles.bigSleepUnit}> + {formatDurationClock(napDuration)}</Text>
+          )}
+        </Text>
+        {record && <View accessibilityLabel={`Sleep from ${formatSleepTime(record.bedtimeMinutes, timeFormat)} to ${formatSleepTime(record.wakeMinutes, timeFormat)}`}>
+          <LinearGradient colors={(location ? sleepSunColors(record, location) : ['#182741', '#182741']) as [string, string, ...string[]]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.durationBar, compact && styles.durationBarCompact]}>
+            {!compact && <><Text style={styles.barTime}>{formatSleepTime(record.bedtimeMinutes, timeFormat)}</Text><Text style={styles.barTime}>{formatSleepTime(record.wakeMinutes, timeFormat)}</Text></>}
+          </LinearGradient>
+        </View>}
+
+      </> : <><Text style={styles.cardMessage}>{record ? 'Review your sleep times' : 'Add your sleep'}</Text>{compact ? <Text style={styles.spanLine}>No sleep recorded</Text> : null}</>}
+    </>
+  );
+  const durationLabel = `${formatDurationClock(sleepMinutes)} sleep${napDuration > 0 ? `, plus ${formatDurationClock(napDuration)} of naps` : ''}`;
+  if (compact) return <View style={[styles.paperCard, styles.wallCard]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${loading ? 'loading sleep' : loaded?.error ? 'sleep could not be loaded, retry' : duration > 0 ? durationLabel : 'no sleep recorded'}`} accessibilityHint={loaded?.error ? 'Retry loading' : 'Open this day'} disabled={loading} onPress={() => loaded?.error ? setRetry(value => value + 1) : onPress(record)} style={({ pressed }) => [styles.overviewBody, styles.overviewBodyCompact, pressed && styles.pressed]}>{summary}</Pressable>
+  </View>;
+  const overviewOpacity = sleepEditorAnim.interpolate({
+    inputRange: [0, 0.55],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+  const overviewLift = sleepEditorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -10],
+    extrapolate: 'clamp',
+  });
+  const editorOpacity = sleepEditorAnim;
+  const editorLift = sleepEditorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [14, 0],
+    extrapolate: 'clamp',
+  });
+
+  return <View style={styles.paperCard}>
+    {loaded?.error || loading ? <View style={styles.overviewBody}>{summary}</View> : <View style={styles.sleepOverviewSlot}>
+      <Animated.View
+        pointerEvents={editingSleep ? 'none' : 'auto'}
+        style={[
+          editingSleep && styles.sleepOverviewOverlay,
+          {
+            opacity: editingSleep ? overviewOpacity : 1,
+            transform: [{ translateY: editingSleep ? overviewLift : 0 }],
+          },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={record ? `Edit sleep, ${durationLabel}` : 'Add your sleep'}
+          onPress={openSleepEditor}
+          disabled={editingSleep}
+          style={({ pressed }) => [styles.overviewBody, pressed && styles.pressed]}
+        >
+          {summary}
+        </Pressable>
+      </Animated.View>
+      {editingSleep && (
+        <Animated.View style={{ opacity: editorOpacity, transform: [{ translateY: editorLift }] }}>
+          <SleepEditor
+            date={date}
+            existing={record}
+            db={db}
+            onClose={closeSleepEditor}
+            onSaved={() => {
+              setLocalRefresh(value => value + 1);
+              onDataChanged?.();
+              closeSleepEditor();
+            }}
+          />
+        </Animated.View>
+      )}
+    </View>}
+    {loaded?.error && !loading ? <Pressable accessibilityRole="button" onPress={() => setRetry(value => value + 1)}><Text style={styles.retry}>Retry</Text></Pressable> : !loading && !editingSleep && <>
+      {loaded?.naps.map(nap => editingNap !== 'new' && editingNap?.id === nap.id ? <NapEditor key={nap.id} date={date} existing={nap} db={db} onClose={() => setEditingNap(null)} onSaved={() => { setEditingNap(null); setLocalRefresh(value => value + 1); onDataChanged?.(); }} /> : <Pressable key={nap.id} accessibilityRole="button" accessibilityLabel={`Edit nap, ${formatSleepTime(nap.startMinutes, timeFormat)} to ${formatSleepTime(nap.endMinutes, timeFormat)}`} onPress={() => setEditingNap(nap)} style={styles.napRow}><Text style={styles.spanLine}>Nap  {formatSleepTime(nap.startMinutes, timeFormat)} – {formatSleepTime(nap.endMinutes, timeFormat)}</Text><Text style={styles.inlineActionText}>Edit</Text></Pressable>)}
+      {editingNap === 'new' ? <NapEditor date={date} existing={null} db={db} onClose={() => setEditingNap(null)} onSaved={() => { setEditingNap(null); setLocalRefresh(value => value + 1); onDataChanged?.(); }} /> : <Pressable accessibilityRole="button" onPress={() => setEditingNap('new')} style={styles.inlineAction}><Text style={styles.inlineActionText}>+ Log nap</Text></Pressable>}
+    </>}
+  </View>;
+}
+
+function SleepDebtCard({ date, db, refresh }: { date: string; db: SQLiteDatabase; refresh: number }) {
+  const { targetSleepTimes } = useWeekStart();
+  const baselineMinutes = useMemo(
+    () => targetSleepDurationMinutes(targetSleepTimes) ?? 8 * 60,
+    [targetSleepTimes],
+  );
+  const [result, setResult] = useState<{ date: string; refresh: number; minutes: number; recordedDays: number; error: boolean } | null>(null);
+  useEffect(() => {
+    let active = true;
+    const dates = Array.from({ length: DEBT_WINDOW_DAYS }, (_, index) => shiftDate(date, -index));
+    Promise.all(dates.map(async day => {
+      const [record, naps] = await Promise.all([loadSleepRecord(db, day), loadNaps(db, day)]);
+      return { date: day, record, naps };
+    })).then(days => { if (active) setResult({ date, refresh, ...calculateSleepDebt(days, baselineMinutes), error: false }); })
+      .catch(() => { if (active) setResult({ date, refresh, minutes: 0, recordedDays: 0, error: true }); });
+    return () => { active = false; };
+  }, [baselineMinutes, date, db, refresh]);
+  const loading = !result || result.date !== date || result.refresh !== refresh;
+  const available = !loading && !result.error && result.recordedDays > 0;
+  return <View style={styles.debtCard}>
+    <View style={styles.debtHeader}><Text accessibilityRole="header" style={styles.debtTitle}>Sleep debt</Text><Text style={styles.debtRange}>LAST 14 DAYS</Text></View>
+    <View style={styles.debtContent}>
+      <View style={styles.debtRing} accessible accessibilityLabel={loading ? 'Loading sleep debt' : result.error ? 'Sleep debt unavailable' : available ? `${formatDurationClock(result.minutes)} of estimated sleep debt` : 'No sleep records'}>
+        <Text style={styles.debtValue}>{loading ? '…' : available ? formatDurationClock(result.minutes) : '—'}</Text>
+        <Text style={styles.debtUnit}>HRS : MIN</Text>
       </View>
-      {napDuration > 0 && !compact && <Text style={styles.spanLine}>Sleep {mainDuration ?? 0} min  ·  Naps {napDuration} min</Text>}
-    </> : <><Text style={styles.cardMessage}>{record ? 'Review your sleep times' : 'Add your sleep'}</Text>{compact ? <Text style={styles.spanLine}>No sleep recorded</Text> : null}</>}
-  </Pressable>;
+      <View style={styles.debtDetails}>
+        <Text style={styles.debtHeadline}>{loading ? 'Looking back' : result.error ? 'Unable to load' : available ? 'Estimated shortfall' : 'Start your history'}</Text>
+        <Text style={styles.debtDescription}>{loading ? 'Checking your sleep records.' : result.error ? 'Please try again later.' : available ? `${result.recordedDays} of 14 nights recorded${result.recordedDays < 14 ? ' · incomplete' : ''}` : 'Log sleep to see your estimate.'}</Text>
+        <View style={styles.debtTrack} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"><View style={[styles.debtProgress, { width: `${loading || result.error ? 0 : result.recordedDays / DEBT_WINDOW_DAYS * 100}%` }]} /></View>
+      </View>
+    </View>
+    <Text style={styles.debtFootnote}>
+      {`Compared with ${formatDurationClock(baselineMinutes)} per night (your target). Adds each recorded day’s shortfall, including naps; missing days are excluded. Sleep needs vary.`}
+    </Text>
+  </View>;
 }
 
 export function TodayScreen({ db }: { db: SQLiteDatabase }) {
   const insets = useSafeAreaInsets();
   const { weekStartsOn } = useWeekStart();
+  const { sunriseSunsetEnabled, sunLocation } = useSunriseSunset();
+  const effectiveLocation = sunriseSunsetEnabled ? sunLocation : null;
   const [today, setToday] = useState(() => localDateKey(new Date()));
   const [selected, setSelected] = useState(today);
   const [refresh, setRefresh] = useState(0);
   const [wall, setWall] = useState(false);
+  const [wallPastToday, setWallPastToday] = useState(false);
+  const [showDayTransition, setShowDayTransition] = useState(false);
   const [wallCount, setWallCount] = useState(30);
   const [wallStart, setWallStart] = useState(0);
-  const [editor, setEditor] = useState<{ date: string; record: SleepRecord | null } | null>(null);
-  const [napEditor, setNapEditor] = useState<{ date: string; nap: Nap | null } | null>(null);
-  const [napList, setNapList] = useState<{ date: string; refresh: number; naps: Nap[]; error: boolean } | null>(null);
-  useEffect(() => {
-    let active = true;
-    loadNaps(db, selected).then(naps => { if (active) setNapList({ date: selected, refresh, naps, error: false }); }).catch(() => { if (active) setNapList({ date: selected, refresh, naps: [], error: true }); });
-    return () => { active = false; };
-  }, [db, selected, refresh]);
   const [reduceMotion, setReduceMotion] = useState(false);
   const listRef = useRef<FlatList<number>>(null);
-  const listContainer = useRef<ComponentRef<typeof View>>(null);
-  const wallOffset = useRef(0);
-  const wallTop = useRef(0);
-  const wallHeight = useRef(0);
   const consumedPinch = useRef(false);
-  const pinch = useRef<{ distance: number; centre: number } | null>(null);
-  const [transition] = useState(() => new Animated.Value(1));
+  const pinch = useRef<{ distance: number } | null>(null);
+  const [glow] = useState(() => new Animated.Value(0));
+  const [historyCount, setHistoryCount] = useState(30);
+  const [timelineHeight, setTimelineHeight] = useState(0);
+  const [timelineOffset] = useState(() => new Animated.Value(0));
+  const [scrollTarget, setScrollTarget] = useState<number | null>(null);
+  const timelineRef = useRef<FlatList<number>>(null);
+  const pendingTarget = useRef<number | null>(null);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [todayPageHeight, setTodayPageHeight] = useState(0);
+  const dragStartOffset = useRef(0);
+  const [wallTransition] = useState(() => new Animated.Value(1));
+  const [jumpTransition] = useState(() => new Animated.Value(0));
+  const [dayEntry] = useState(() => new Animated.Value(1));
+  const animateJump = useRef(false);
+  const showJumpToToday = wall ? wallPastToday : selected < today;
+  useEffect(() => {
+    if (reduceMotion) { jumpTransition.setValue(showJumpToToday ? 1 : 0); return; }
+    const animation = Animated.timing(jumpTransition, { toValue: showJumpToToday ? 1 : 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    animation.start();
+    return () => animation.stop();
+  }, [showJumpToToday, reduceMotion, jumpTransition]);
   const stateRef = useRef({ today, selected, wall, wallCount, reduceMotion });
   useEffect(() => { stateRef.current = { today, selected, wall, wallCount, reduceMotion }; }, [today, selected, wall, wallCount, reduceMotion]);
+  const onTimelineViewable = useCallback(({ viewableItems }: { viewableItems: { item: number; isViewable: boolean }[] }) => {
+    if (stateRef.current.wall) return;
+    const target = pendingTarget.current;
+    if (target !== null) {
+      if (viewableItems.some(item => item.isViewable && item.item === target)) { pendingTarget.current = null; setSelected(shiftDate(stateRef.current.today, -target)); }
+      return;
+    }
+    const visible = viewableItems.find(item => item.isViewable);
+    if (visible) setSelected(shiftDate(stateRef.current.today, -visible.item));
+  }, []);
 
   const refreshToday = useCallback(() => {
     const now = localDateKey(new Date());
@@ -191,56 +388,101 @@ export function TodayScreen({ db }: { db: SQLiteDatabase }) {
     return () => { active = false; listener.remove(); };
   }, []);
 
-  const animatePage = useCallback((date: string) => {
-    setSelected(date);
-    if (stateRef.current.reduceMotion) return;
-    transition.setValue(0);
-    Animated.timing(transition, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-  }, [transition]);
+  useEffect(() => {
+    glow.stopAnimation();
+    if (wall || selected !== today || reduceMotion) { glow.setValue(0); return; }
+    const animation = Animated.loop(Animated.sequence([
+      Animated.timing(glow, { toValue: 1, duration: 3600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(glow, { toValue: 0, duration: 3600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    animation.start();
+    return () => animation.stop();
+  }, [glow, wall, selected, today, reduceMotion]);
+
+  const navigateToDay = useCallback((date: string) => {
+    const index = Math.max(0, daysBetween(date, stateRef.current.today));
+    setHistoryCount(count => Math.max(count, index + 30));
+    pendingTarget.current = index;
+    if (index !== 0 || !animateJump.current) setSelected(date);
+    setScrollTarget(index);
+  }, [setHistoryCount]);
+  useEffect(() => {
+    if (wall || scrollTarget === null) return;
+    const frame = requestAnimationFrame(() => {
+      if (scrollTarget === 0) {
+        const animated = animateJump.current && !stateRef.current.reduceMotion;
+        timelineRef.current?.scrollToOffset({ offset: 0, animated });
+        if (!animated) { pendingTarget.current = null; setSelected(stateRef.current.today); }
+        animateJump.current = false;
+      } else timelineRef.current?.scrollToIndex({ index: scrollTarget, animated: false, viewPosition: 0 });
+      setScrollTarget(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [wall, scrollTarget, historyCount]);
+  useEffect(() => () => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+  }, []);
   const openWall = useCallback(() => {
     const { today: currentToday, selected: current } = stateRef.current;
     const index = Math.max(0, daysBetween(current, currentToday));
-    setWallStart(index); setWallCount(Math.max(30, index + 30)); wallOffset.current = index * WALL_ITEM_HEIGHT;
+    pendingTarget.current = null;
+    wallTransition.stopAnimation();
+    const animate = !stateRef.current.reduceMotion;
+    wallTransition.setValue(animate ? 0 : 1);
+    setShowDayTransition(animate);
+    setWallPastToday(index > 0);
+    setWallStart(index); setWallCount(Math.max(30, index + 30));
     setWall(true);
-  }, []);
-  const openDay = useCallback((date: string) => { setWall(false); animatePage(date); }, [animatePage]);
+  }, [wallTransition]);
+  useEffect(() => {
+    if (!wall || !showDayTransition) return;
+    const frame = requestAnimationFrame(() => {
+      Animated.timing(wallTransition, { toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
+        if (finished) setShowDayTransition(false);
+      });
+    });
+    return () => { cancelAnimationFrame(frame); wallTransition.stopAnimation(); };
+  }, [wall, showDayTransition, wallTransition]);
+  const openDay = useCallback((date: string) => {
+    const fromWall = stateRef.current.wall;
+    const motion = !stateRef.current.reduceMotion;
+    animateJump.current = date === stateRef.current.today && !fromWall && motion;
+    wallTransition.stopAnimation(); setShowDayTransition(false); setWall(false);
+    dayEntry.stopAnimation();
+    if (fromWall && motion) {
+      dayEntry.setValue(0);
+      Animated.timing(dayEntry, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    } else dayEntry.setValue(1);
+    navigateToDay(date);
+  }, [navigateToDay, wallTransition, dayEntry]);
   // Gesture callbacks read refs only when touch events occur.
   // eslint-disable-next-line react-hooks/refs
   const pan = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponderCapture: (event, gesture) => event.nativeEvent.touches.length >= 2 || (!stateRef.current.wall && Math.abs(gesture.dy) > 22 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5),
+    onMoveShouldSetPanResponderCapture: event => event.nativeEvent.touches.length >= 2,
     onPanResponderGrant: event => {
       consumedPinch.current = false;
       const touches = event.nativeEvent.touches;
-      if (touches.length >= 2) {
-        pinch.current = { distance: Math.abs(touches[0].pageY - touches[1].pageY), centre: (touches[0].pageY + touches[1].pageY) / 2 };
-        listContainer.current?.measureInWindow((_x, y) => { wallTop.current = y; });
-      } else pinch.current = null;
+      pinch.current = touches.length >= 2 ? { distance: Math.abs(touches[0].pageY - touches[1].pageY) } : null;
     },
     onPanResponderMove: event => {
       const touches = event.nativeEvent.touches;
       if (consumedPinch.current || touches.length < 2) return;
       const distance = Math.abs(touches[0].pageY - touches[1].pageY);
-      const centre = (touches[0].pageY + touches[1].pageY) / 2;
-      if (!pinch.current) { pinch.current = { distance, centre }; return; }
+      if (!pinch.current) { pinch.current = { distance }; return; }
       const delta = distance - pinch.current.distance;
       if (!stateRef.current.wall && delta < -45) { pinch.current = null; consumedPinch.current = true; openWall(); }
       else if (stateRef.current.wall && delta > 45) {
-        const index = Math.max(0, Math.min(stateRef.current.wallCount - 1, Math.floor((wallOffset.current + centre - wallTop.current) / WALL_ITEM_HEIGHT)));
-        pinch.current = null; consumedPinch.current = true; openDay(shiftDate(stateRef.current.today, -index));
+        pinch.current = null; consumedPinch.current = true; openDay(stateRef.current.today);
       }
     },
-    onPanResponderRelease: (_, gesture) => {
-      if (consumedPinch.current || pinch.current || stateRef.current.wall) { pinch.current = null; return; }
-      if (Math.abs(gesture.dy) < 60 && Math.abs(gesture.vy) < 0.6) return;
-      const { selected: current, today: currentToday } = stateRef.current;
-      const next = shiftDate(current, gesture.dy > 0 ? -1 : 1);
-      if (next <= currentToday) animatePage(next);
-    },
+    onPanResponderRelease: () => { pinch.current = null; },
+    onPanResponderTerminate: () => { pinch.current = null; consumedPinch.current = false; },
     onPanResponderTerminationRequest: () => false,
-  }), [animatePage, openDay, openWall]);
+  }), [openDay, openWall]);
+  const timelineData = useMemo(() => Array.from({ length: historyCount }, (_, index) => index), [historyCount]);
   const wallData = useMemo(() => Array.from({ length: wallCount }, (_, index) => index), [wallCount]);
-  const previous = () => animatePage(shiftDate(selected, -1));
-  const next = () => { if (selected < today) animatePage(shiftDate(selected, 1)); };
+  const previous = () => openDay(shiftDate(selected, -1));
+  const next = () => { if (selected < today) openDay(shiftDate(selected, 1)); };
   return <View style={styles.container} {...pan.panHandlers}
     accessibilityActions={[
       { name: 'previousDay', label: 'Previous day' },
@@ -252,94 +494,178 @@ export function TodayScreen({ db }: { db: SQLiteDatabase }) {
       switch (event.nativeEvent.actionName) {
         case 'previousDay': setWall(false); previous(); break;
         case 'nextDay': setWall(false); next(); break;
-        case 'goToday': setWall(false); animatePage(today); break;
+        case 'goToday': openDay(today); break;
         case 'toggleHistory':
-          if (wall) openDay(shiftDate(today, -Math.max(0, Math.min(wallCount - 1, Math.floor((wallOffset.current + wallHeight.current / 2) / WALL_ITEM_HEIGHT)))));
+          if (wall) openDay(today);
           else openWall();
           break;
       }
     }}>
 
-    <View style={[styles.historyHeader, { paddingTop: insets.top + 12 }]}>
-      <View style={styles.topRow}><SnoozeBrand /><View style={styles.avatar} accessibilityLabel="Profile" /></View>
-    </View>
-    {wall ? <View ref={listContainer} style={styles.wallContainer} onLayout={event => { wallHeight.current = event.nativeEvent.layout.height; listContainer.current?.measureInWindow((_x, y) => { wallTop.current = y; }); }}>
-      <FlatList ref={listRef} data={wallData} keyExtractor={item => String(item)} initialScrollIndex={wallStart} getItemLayout={(_, index) => ({ length: WALL_ITEM_HEIGHT, offset: WALL_ITEM_HEIGHT * index, index })} onScroll={event => { wallOffset.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16} onEndReached={() => setWallCount(value => value + 30)} onEndReachedThreshold={0.5} contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} renderItem={({ item }) => {
+    {!wall && <>
+      <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.glowContainer, { opacity: Animated.multiply(reduceMotion ? 0.18 : glow.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.23] }), timelineOffset.interpolate({ inputRange: [0, Math.max(1, timelineHeight * 0.7)], outputRange: [1, 0], extrapolate: 'clamp' })) }]}><LinearGradient colors={['transparent', '#8098d4', 'transparent']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.glowGradient} /></Animated.View>
+      <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.pastBackground, timelineHeight === 0 && { opacity: 0 }, reduceMotion ? { opacity: timelineOffset.interpolate({ inputRange: [0, Math.max(1, timelineHeight)], outputRange: [0, 1], extrapolate: 'clamp' }) } : { transform: [{ translateY: timelineOffset.interpolate({ inputRange: [0, Math.max(1, timelineHeight)], outputRange: [-timelineHeight, 0], extrapolate: 'clamp' }) }] }]} />
+    </>}
+    {wall && <View style={[styles.wallContainer, { paddingTop: insets.top + 20 }]}>
+      <FlatList ref={listRef} data={wallData} keyExtractor={item => String(item)} initialScrollIndex={wallStart} getItemLayout={(_, index) => ({ length: WALL_ITEM_HEIGHT, offset: WALL_ITEM_HEIGHT * index, index })} onScroll={event => { setWallPastToday(event.nativeEvent.contentOffset.y > 20); }} scrollEventThrottle={16} onEndReached={() => setWallCount(value => value + 30)} onEndReachedThreshold={0.5} contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} renderItem={({ item }) => {
         const date = shiftDate(today, -item);
-        return <View style={styles.wallItem}><DateOverview date={date} db={db} refresh={refresh} compact onPress={() => openDay(date)} /></View>;
+        const delay = Math.min(Math.abs(item - wallStart), 4) * 0.08;
+        const progress = wallTransition.interpolate({ inputRange: [0, delay + 0.001, delay + 0.65, 1], outputRange: [0, 0, 1, 1], extrapolate: 'clamp' });
+        return <Animated.View style={[styles.wallItem, { opacity: progress, transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [32, 0] }) }, { scale: progress.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] }) }] }]}><DateOverview location={effectiveLocation} date={date} db={db} refresh={refresh} compact onPress={() => openDay(date)} /></Animated.View>;
       }} />
-    </View> : <Animated.View style={[styles.fill, { opacity: transition, transform: [{ translateY: transition.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }]}>
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}>
-        <View style={styles.todayRow}>
-          <WeekdayDots activeIndex={weekdayIndex(selected, weekStartsOn)} weekStartsOn={weekStartsOn} />
-          <Text style={styles.todayTitle} accessibilityRole="header">{dayHeaderTitle(selected, today)}</Text>
-        </View>
-        <DateOverview date={selected} db={db} refresh={refresh} onPress={record => setEditor({ date: selected, record })} />
-        <Pressable accessibilityRole="button" accessibilityLabel="Log Nap" onPress={() => setNapEditor({ date: selected, nap: null })} style={({ pressed }) => [styles.napButton, pressed && styles.pressed]}>
-          <View style={styles.napPlusIcon} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-            <View style={styles.napPlusBarH} />
-            <View style={styles.napPlusBarV} />
-          </View>
-          <Text style={styles.napButtonText}>Log Nap</Text>
-        </Pressable>
-        {napList?.date === selected && napList.refresh === refresh && (napList.error
-          ? <Pressable onPress={() => setRefresh(value => value + 1)} accessibilityRole="button"><Text style={styles.napListText}>Could not load naps. Tap to retry.</Text></Pressable>
-          : napList.naps.map(nap => <Pressable key={nap.id} accessibilityRole="button" accessibilityLabel={`Edit nap, ${formatSleepTime(nap.startMinutes)} to ${formatSleepTime(nap.endMinutes)}`} onPress={() => setNapEditor({ date: selected, nap })} style={styles.napRow}><Text style={styles.napListText}>Nap · {formatSleepTime(nap.startMinutes)} → {formatSleepTime(nap.endMinutes)}</Text><Text style={styles.napListText}>Edit</Text></Pressable>))}
-      </ScrollView>
+    </View>}
+    {(!wall || showDayTransition) && <Animated.View pointerEvents={wall ? 'none' : 'auto'} accessibilityElementsHidden={wall} importantForAccessibility={wall ? 'no-hide-descendants' : 'auto'} style={[wall ? styles.dayOverlay : styles.fill, { opacity: wall ? wallTransition.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 0, 0], extrapolate: 'clamp' }) : dayEntry, transform: [{ translateY: wall ? 0 : dayEntry.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }]}>
+      <Animated.FlatList
+        ref={timelineRef}
+        inverted
+        keyboardShouldPersistTaps="handled"
+        onLayout={event => setTimelineHeight(event.nativeEvent.layout.height)}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: timelineOffset } } }], { useNativeDriver: true })}
+        scrollEventThrottle={16}
+        snapToOffsets={todayPageHeight > 0 ? [0, todayPageHeight] : undefined}
+        snapToEnd={false}
+        data={timelineData}
+        keyExtractor={item => String(item)}
+        windowSize={5}
+        initialNumToRender={2}
+        maxToRenderPerBatch={3}
+        viewabilityConfig={TIMELINE_VIEWABILITY}
+        onViewableItemsChanged={onTimelineViewable}
+        onScrollToIndexFailed={info => {
+          timelineRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
+          if (retryTimer.current) clearTimeout(retryTimer.current);
+          retryTimer.current = setTimeout(() => {
+            if (pendingTarget.current === info.index) timelineRef.current?.scrollToIndex({ index: info.index, animated: false, viewPosition: 0 });
+          }, 100);
+        }}
+        onScrollBeginDrag={event => { dragStartOffset.current = event.nativeEvent.contentOffset.y; pendingTarget.current = null; }}
+        onMomentumScrollEnd={() => {
+          const target = pendingTarget.current;
+          if (target !== null) setSelected(shiftDate(stateRef.current.today, -target));
+          pendingTarget.current = null;
+        }}
+        onScrollEndDrag={event => {
+          const { contentOffset, velocity } = event.nativeEvent;
+          // A deliberate drag from Today opens Yesterday immediately; a fast fling
+          // keeps its momentum and can continue freely into older history.
+          if (todayPageHeight > 0 && dragStartOffset.current <= 2 && contentOffset.y > 2 && contentOffset.y < todayPageHeight && Math.abs(velocity?.y ?? 0) < 1.2) {
+            pendingTarget.current = 1;
+            timelineRef.current?.scrollToOffset({ offset: todayPageHeight, animated: !stateRef.current.reduceMotion });
+            if (stateRef.current.reduceMotion) { setSelected(shiftDate(stateRef.current.today, -1)); pendingTarget.current = null; }
+          }
+        }}
+        onEndReached={() => setHistoryCount(count => count + 30)}
+        onEndReachedThreshold={0.5}
+        renderItem={({ item }) => {
+          const date = shiftDate(today, -item);
+          return <Animated.View onLayout={item === 0 ? event => setTodayPageHeight(event.nativeEvent.layout.height) : undefined} style={[styles.scroll, item === 0 ? {
+            minHeight: timelineHeight, paddingTop: insets.top + 20, paddingBottom: insets.bottom + 100,
+            transform: reduceMotion ? [] : [
+              { perspective: 1000 },
+              { translateY: timelineOffset.interpolate({ inputRange: [0, Math.max(1, timelineHeight)], outputRange: [0, -timelineHeight * 0.72], extrapolate: 'clamp' }) },
+              { scale: timelineOffset.interpolate({ inputRange: [0, Math.max(1, timelineHeight)], outputRange: [1, 0.94], extrapolate: 'clamp' }) },
+            ],
+          } : item === 1 ? {
+            paddingTop: 20, paddingBottom: 24, zIndex: 2,
+          } : { paddingTop: 20, paddingBottom: 24 }]}>
+            {item === 1 && <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.yesterdayBackground} />}
+            <Text style={styles.todayTitle} accessibilityRole="header">{dayHeaderTitle(date, today)}</Text>
+            <View style={styles.dayLayout}>
+              <View style={styles.weekdayRail}><WeekdayDots layout="vertical" activeIndex={weekdayIndex(date, weekStartsOn)} weekStartsOn={weekStartsOn} anchorDate={date} today={today} /></View>
+              <View style={styles.dayMain}>
+                <DateOverview date={date} db={db} refresh={refresh} onDataChanged={() => setRefresh(value => value + 1)} location={effectiveLocation} onPress={() => {}} />
+                <SleepDebtCard date={date} db={db} refresh={refresh} />
+              </View>
+            </View>
+          </Animated.View>;
+        }}
+      />
     </Animated.View>}
-    {napEditor && <NapEditor key={`${napEditor.date}-${napEditor.nap?.id ?? 'new'}`} date={napEditor.date} existing={napEditor.nap} db={db} onClose={() => setNapEditor(null)} onSaved={() => { setNapEditor(null); setRefresh(value => value + 1); }} />}
-    {editor && <SleepEditor key={editor.date} date={editor.date} existing={editor.record} db={db} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); setRefresh(value => value + 1); }} />}
+    <Animated.View pointerEvents={showJumpToToday ? 'auto' : 'none'} accessibilityElementsHidden={!showJumpToToday} importantForAccessibility={showJumpToToday ? 'auto' : 'no-hide-descendants'} style={[styles.jumpContainer, { bottom: insets.bottom + 88, opacity: jumpTransition, transform: [{ translateY: jumpTransition.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }] }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Jump to Today" onPress={() => openDay(today)} style={({ pressed }) => [styles.jumpButton, pressed && styles.pressed]}>
+        <Text style={styles.jumpArrow} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">↓</Text>
+        <Text style={styles.jumpText}>Jump to Today</Text>
+      </Pressable>
+    </Animated.View>
   </View>;
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.screen },
+  container: { flex: 1, backgroundColor: theme.screen, overflow: 'hidden' },
+  yesterdayBackground: { position: 'absolute', left: -1000, right: -1000, top: 0, bottom: 0, backgroundColor: '#0b162c' },
+  pastBackground: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: '#0b162c' },
+  glowContainer: { position: 'absolute', top: '10%', left: '-30%', width: '160%', height: '72%' },
+  glowGradient: { flex: 1, borderRadius: 240 },
   fill: { flex: 1 },
-  historyHeader: { paddingHorizontal: 22, width: '100%', maxWidth: 520, alignSelf: 'center' },
+  jumpContainer: { position: 'absolute', alignSelf: 'center', zIndex: 2 },
+  jumpButton: { minHeight: 48, paddingHorizontal: 18, borderRadius: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: theme.buttonFill, shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  jumpArrow: { fontFamily: typography.bodyBold, color: theme.buttonText, fontSize: 20, lineHeight: 24 },
+  jumpText: { fontFamily: typography.bodyBold, color: theme.buttonText, fontSize: 14 },
+  dayOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   wallContainer: { flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center' },
   wallItem: { height: WALL_ITEM_HEIGHT, paddingHorizontal: 22, paddingBottom: 12 },
   wallCard: { flex: 1 },
-  scroll: { paddingHorizontal: 22, maxWidth: 520, width: '100%', alignSelf: 'center', gap: 18 },
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.buttonFill },
-  todayRow: { marginTop: 8, alignItems: 'center', width: '100%', gap: 6 },
-  todayTitle: { color: theme.textOnNight, fontSize: 38, fontWeight: '700', letterSpacing: -1.2, textAlign: 'center' },
+  scroll: { paddingLeft: 8, paddingRight: 26, maxWidth: 520, width: '100%', alignSelf: 'center', gap: 14 },
+  todayTitle: { fontFamily: typography.heading, color: theme.textOnNight, fontSize: 38, letterSpacing: -1.2, textAlign: 'center', marginTop: 8 },
+  dayLayout: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, width: '100%' },
+  weekdayRail: { width: 24, alignItems: 'center', paddingTop: 28 },
+  dayMain: { flex: 1, minWidth: 0, marginRight: 2, gap: 14 },
+  debtCard: { backgroundColor: theme.card, borderRadius: 24, padding: 22, gap: 18 },
+  debtHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  debtTitle: { fontFamily: typography.heading, color: theme.textOnPaper, fontSize: 21 },
+  debtRange: { fontFamily: typography.bodyBold, color: theme.textOnPaperMuted, fontSize: 10, letterSpacing: 1 },
+  debtContent: { flexDirection: 'row', alignItems: 'center', gap: 18 },
+  debtRing: { width: 116, height: 116, borderRadius: 58, borderWidth: 7, borderColor: theme.buttonFill, alignItems: 'center', justifyContent: 'center' },
+  debtValue: { fontFamily: typography.bodyBold, color: theme.textOnPaper, fontSize: 27, letterSpacing: -1 },
+  debtUnit: { fontFamily: typography.bodySemibold, color: theme.textOnPaperMuted, fontSize: 10, letterSpacing: 0.7 },
+  debtDetails: { flex: 1, gap: 7 },
+  debtHeadline: { fontFamily: typography.bodyBold, color: theme.textOnPaper, fontSize: 15 },
+  debtDescription: { fontFamily: typography.body, color: theme.textOnPaperMuted, fontSize: 13, lineHeight: 18 },
+  debtTrack: { height: 5, borderRadius: 3, overflow: 'hidden', backgroundColor: theme.borderOnPaper, marginTop: 4 },
+  debtProgress: { height: '100%', borderRadius: 3, backgroundColor: theme.textOnPaper },
+  debtFootnote: { fontFamily: typography.body, color: theme.textOnPaperMuted, fontSize: 12, lineHeight: 18 },
   paperCard: { backgroundColor: theme.card, borderRadius: 24, padding: 22, gap: 10 },
-  overline: { color: theme.textOnPaperMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1.2 },
-  bigSleep: { fontSize: 40, lineHeight: 44 },
-  bigSleepValue: { color: theme.textOnPaper, fontSize: 40, fontWeight: '700', letterSpacing: -1.5 },
-  bigSleepUnit: { color: theme.textOnPaperFaint, fontSize: 28, fontWeight: '600', letterSpacing: -0.5 },
-  cardMessage: { color: theme.textOnPaper, fontSize: 24, fontWeight: '700' },
-  spanLine: { color: theme.textOnPaperMuted, fontSize: 14 },
-  durationBar: { height: 8, flexDirection: 'row', borderRadius: 4, overflow: 'hidden' },
-  sleepSegment: { backgroundColor: theme.textOnPaper },
-  napSegment: { backgroundColor: '#8098d4' },
-  napRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 8 },
-  napListText: { color: theme.textOnNight, fontSize: 14 },
-  retry: { color: theme.link, fontSize: 14 },
-  napButton: { minHeight: 54, borderRadius: 27, backgroundColor: theme.buttonFill, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 22 },
-  napPlusIcon: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
-  napPlusBarH: { position: 'absolute', width: 14, height: 2, borderRadius: 1, backgroundColor: theme.buttonText },
-  napPlusBarV: { position: 'absolute', width: 2, height: 14, borderRadius: 1, backgroundColor: theme.buttonText },
-  napButtonText: { color: theme.buttonText, fontSize: 16, fontWeight: '700' },
+  sleepOverviewSlot: { position: 'relative' },
+  sleepOverviewOverlay: { position: 'absolute', top: 0, right: 0, left: 0 },
+  overviewBody: { gap: 18 },
+  overviewBodyCompact: { gap: 10 },
+  overline: { fontFamily: typography.heading, color: theme.textOnPaperMuted, fontSize: 9, letterSpacing: 1.2, marginBottom: 2 },
+  bigSleep: { fontFamily: typography.body, fontSize: 40, lineHeight: 48, marginTop: 2 },
+  bigSleepValue: { fontFamily: typography.bodyBold, color: theme.textOnPaper, fontSize: 40, letterSpacing: -1.5 },
+  bigSleepUnit: { fontFamily: typography.bodySemibold, color: theme.textOnPaperFaint, fontSize: 28, letterSpacing: -0.5 },
+  cardMessage: { fontFamily: typography.heading, color: theme.textOnPaper, fontSize: 24 },
+  spanLine: { fontFamily: typography.body, color: theme.textOnPaperMuted, fontSize: 14, lineHeight: 18, includeFontPadding: false },
+  durationBar: { minHeight: 46, borderRadius: 12, marginTop: 4, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  durationBarCompact: { minHeight: 8, borderRadius: 4 },
+  barTime: { fontFamily: typography.bodyBold, color: '#ffffff', fontSize: 14, textShadowColor: 'rgba(0,0,0,0.65)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  retry: { fontFamily: typography.body, color: theme.link, fontSize: 14 },
   pressed: { opacity: 0.85 },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 24 },
-  dialog: { width: '100%', maxWidth: 420, alignSelf: 'center', backgroundColor: theme.card, borderRadius: 24, padding: 22, gap: 16 },
-  dialogTitle: { color: theme.textOnPaper, fontSize: 24, fontWeight: '700' },
-  dialogIntro: { color: theme.textOnPaperMuted, fontSize: 14 },
+  sleepEditor: { gap: 14 },
+  clockFields: { flexDirection: 'row', gap: 12 },
+  clockGroup: { flex: 1, minWidth: 0, gap: 8 },
+  clockInput: { fontFamily: typography.bodySemibold, color: theme.textOnPaper, borderWidth: 1, borderColor: theme.borderOnPaper, borderRadius: 12, height: 52, paddingHorizontal: 10, fontSize: 22, textAlign: 'center' },
+  clockPeriods: { flexDirection: 'row', alignSelf: 'center' },
+  clockPeriod: { minWidth: 44, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+  inlineEditor: { gap: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.borderOnPaper },
+  inlineAction: { minHeight: 44, justifyContent: 'center' },
+  inlineActionText: { fontFamily: typography.bodyBold, color: theme.textOnPaper, fontSize: 15 },
+  napRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  dialogTitle: { fontFamily: typography.heading, color: theme.textOnPaper, fontSize: 24 },
+  dialogIntro: { fontFamily: typography.body, color: theme.textOnPaperMuted, fontSize: 14 },
   timeGroup: { gap: 8 },
-  fieldLabel: { color: theme.textOnPaper, fontWeight: '600', fontSize: 15 },
+  fieldLabel: { fontFamily: typography.bodySemibold, color: theme.textOnPaper, fontSize: 15 },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  input: { color: theme.textOnPaper, borderWidth: 1, borderColor: theme.borderOnPaper, borderRadius: 10, width: 55, height: 48, textAlign: 'center', fontSize: 18 },
-  colon: { color: theme.textOnPaper, fontSize: 20 },
+  input: { fontFamily: typography.body, color: theme.textOnPaper, borderWidth: 1, borderColor: theme.borderOnPaper, borderRadius: 10, width: 55, height: 48, textAlign: 'center', fontSize: 18 },
+  colon: { fontFamily: typography.body, color: theme.textOnPaper, fontSize: 20 },
   periods: { flexDirection: 'row', marginLeft: 4 },
   period: { paddingHorizontal: 10, minHeight: 44, justifyContent: 'center', borderRadius: 10 },
   selectedPeriod: { backgroundColor: theme.buttonFill },
-  periodText: { color: theme.textOnPaper, fontWeight: '600' },
-  errorOnPaper: { color: theme.textOnPaper, fontWeight: '600', fontSize: 14 },
+  periodText: { fontFamily: typography.bodySemibold, color: theme.textOnPaper },
+  errorOnPaper: { fontFamily: typography.bodySemibold, color: theme.textOnPaper, fontSize: 14 },
   dialogActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
   cancelButton: { minHeight: 44, paddingHorizontal: 16, justifyContent: 'center' },
-  cancelText: { color: theme.textOnPaper, fontWeight: '600' },
+  cancelText: { fontFamily: typography.bodySemibold, color: theme.textOnPaper },
   saveButton: { minHeight: 44, paddingHorizontal: 22, borderRadius: 14, backgroundColor: theme.buttonFill, justifyContent: 'center' },
-  saveText: { color: theme.buttonText, fontWeight: '700' },
+  saveText: { fontFamily: typography.bodyBold, color: theme.buttonText },
 });
+

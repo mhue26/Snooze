@@ -1,5 +1,5 @@
 import { expect, test } from '@jest/globals';
-import { dayHeaderTitle, formatMonthDay, weekdayIndex, weekdayInitial, weekdayLabel } from '../src/domain/dates';
+import { todayWeekdaySlot, dateForWeekdaySlot, dayHeaderTitle, formatMonthDay, weekdayIndex, weekdayInitial, weekdayLabel } from '../src/domain/dates';
 
 test('formats month and day without weekday or year', () => {
   expect(formatMonthDay('2026-11-08', 'en-US')).toBe('November 8');
@@ -53,10 +53,24 @@ test('calculates weekday index starting on Sunday', () => {
   expect(sundayInitials).toEqual(['S', 'M', 'T', 'W', 'T', 'F', 'S']);
 });
 
+test('maps weekday slots to dates in the anchor week', () => {
+  // 2026-11-10 Tuesday, Monday-first week Mon 9 … Sun 15
+  expect(dateForWeekdaySlot('2026-11-10', 0, 'monday')).toBe('2026-11-09');
+  expect(dateForWeekdaySlot('2026-11-10', 1, 'monday')).toBe('2026-11-10');
+  expect(dateForWeekdaySlot('2026-11-10', 6, 'monday')).toBe('2026-11-15');
+});
+
 test('computes dayHeaderTitle for Today, Yesterday and past dates', () => {
   const today = '2026-11-10';
   expect(dayHeaderTitle('2026-11-10', today, 'en-US')).toBe('Today');
   expect(dayHeaderTitle('2026-11-09', today, 'en-US')).toBe('Yesterday');
   expect(dayHeaderTitle('2026-11-08', today, 'en-US')).toBe('November 8');
   expect(dayHeaderTitle('2026-10-24', today, 'en-US')).toBe('October 24');
+});
+
+test('marks today only inside the displayed week for either week start', () => {
+  expect(todayWeekdaySlot('2026-12-31', '2027-01-01', 'monday')).toBe(4);
+  expect(todayWeekdaySlot('2026-11-08', '2026-11-09', 'sunday')).toBe(1);
+  expect(todayWeekdaySlot('2026-11-08', '2026-11-09', 'monday')).toBeNull();
+  expect(todayWeekdaySlot('2026-11-01', '2026-11-09', 'sunday')).toBeNull();
 });

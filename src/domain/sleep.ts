@@ -1,4 +1,5 @@
 export type SleepRecord = { date: string; bedtimeMinutes: number; wakeMinutes: number };
+export type TimeFormat = '12h' | '24h';
 
 export function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -16,9 +17,17 @@ export function daysBetween(earlier: string, later: string): number {
   return Math.round((utc(later) - utc(earlier)) / 86400000);
 }
 
-export function formatSleepTime(minutes: number): string {
+export function formatSleepTime(minutes: number, timeFormat: TimeFormat = '12h'): string {
   const hour = Math.floor(minutes / 60);
-  return `${hour % 12 || 12}:${String(minutes % 60).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`;
+  const minute = String(minutes % 60).padStart(2, '0');
+  if (timeFormat === '24h') return `${String(hour).padStart(2, '0')}:${minute}`;
+  return `${hour % 12 || 12}:${minute} ${hour < 12 ? 'AM' : 'PM'}`;
+}
+
+/** Hours and minutes since midnight as H:MM (e.g. rest duration 8:00). */
+export function formatDurationClock(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  return `${hours}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
 export function parseSleepTime(hour: string, minute: string, period: 'AM' | 'PM'): number | null {
@@ -26,6 +35,15 @@ export function parseSleepTime(hour: string, minute: string, period: 'AM' | 'PM'
   const h = Number(hour), m = Number(minute);
   if (h < 1 || h > 12 || m > 59) return null;
   return (h % 12 + (period === 'PM' ? 12 : 0)) * 60 + m;
+}
+
+/** Parse a four-digit HHMM entry using the selected clock format. */
+export function parseClockDigits(digits: string, timeFormat: TimeFormat, period: 'AM' | 'PM'): number | null {
+  if (!/^\d{4}$/.test(digits)) return null;
+  const hour = Number(digits.slice(0, 2)), minute = Number(digits.slice(2));
+  if (minute > 59) return null;
+  if (timeFormat === '12h') return parseSleepTime(digits.slice(0, 2), digits.slice(2), period);
+  return hour < 24 ? hour * 60 + minute : null;
 }
 
 /** Elapsed minutes between local date-times, accounting for daylight-saving changes. */

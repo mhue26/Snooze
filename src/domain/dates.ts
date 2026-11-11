@@ -51,3 +51,15 @@ export function weekdayInitial(index: number, weekStartsOn: WeekStartsOn): strin
   const label = weekdayLabel(index, weekStartsOn);
   return label.charAt(0).toUpperCase();
 }
+
+/** Calendar date for weekday slot `index` in the same week as `anchorDate`. */
+export function dateForWeekdaySlot(anchorDate: string, slotIndex: number, weekStartsOn: WeekStartsOn): string {
+  const active = weekdayIndex(anchorDate, weekStartsOn);
+  return shiftDate(anchorDate, slotIndex - active);
+}
+
+/** Slot for today only when it belongs to the displayed week. */
+export function todayWeekdaySlot(anchorDate: string, today: string, weekStartsOn: WeekStartsOn): number | null {
+  const index = weekdayIndex(today, weekStartsOn);
+  return dateForWeekdaySlot(anchorDate, index, weekStartsOn) === today ? index : null;
+}
