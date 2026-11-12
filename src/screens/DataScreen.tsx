@@ -12,7 +12,6 @@ import { useAnimatedDropdown } from '../hooks/useAnimatedDropdown';
 import { OpenSourceNoticesScreen } from './OpenSourceNoticesScreen';
 import {
   SETTINGS_INNER_HEIGHT,
-  SETTINGS_INSET,
   SETTINGS_OUTER_HEIGHT,
   settingsControlStyles,
 } from '../theme/settingsControls';
