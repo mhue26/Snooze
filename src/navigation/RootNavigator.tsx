@@ -13,6 +13,7 @@ const TAB_SIZE = 48;
 const TAB_GAP = 2;
 const ISLAND_INSET = 6;
 const tabHighlightOffset = (i: number) => ISLAND_INSET + i * (TAB_SIZE + TAB_GAP);
+const pagerSpring = { useNativeDriver: true as const, tension: 72, friction: 14 };
 
 function Log() { return <PlaceholderScreen title="Log" subtitle="Your sleep log will appear here." />; }
 function Plan() { return <PlaceholderScreen title="Plan" subtitle="Your sleep plans will appear here." />; }
@@ -70,7 +71,6 @@ export function RootNavigator({ db }: { db: SQLiteDatabase }) {
   const panStartIndex = useRef<number>(index);
   const islandAnimationMs = 200;
   const islandHideDistance = 72;
-  const pagerSpring = { useNativeDriver: true as const, tension: 72, friction: 14 };
   const tabTimingMs = 200;
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Animated, Easing } from 'react-native';
 
 export const DROPDOWN_ANIM_MS = 220;
@@ -6,7 +6,7 @@ export const DROPDOWN_ANIM_MS = 220;
 export function useAnimatedDropdown(maxHeight: number) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const progress = useRef(new Animated.Value(0)).current;
+  const [progress] = useState(() => new Animated.Value(0));
 
   const setOpenAnimated = useCallback((next: boolean) => {
     if (next) {

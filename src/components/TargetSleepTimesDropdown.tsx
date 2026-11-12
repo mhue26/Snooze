@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTimeFormat } from '../context/WeekStartContext';
 import { isValidTargetSleepTimes, type TargetSleepTimes } from '../domain/targetSleep';
@@ -32,17 +32,34 @@ export function TargetSleepTimesDropdown({
   onClose: () => void;
 }) {
   const { timeFormat } = useTimeFormat();
+  const resetKey = `${active ? 'active' : 'inactive'}-${initial.bedtimeMinutes}-${initial.wakeMinutes}-${timeFormat}`;
+
+  return (
+    <TargetSleepTimesForm
+      key={resetKey}
+      initial={initial}
+      timeFormat={timeFormat}
+      onSave={onSave}
+      onClose={onClose}
+    />
+  );
+}
+
+function TargetSleepTimesForm({
+  initial,
+  timeFormat,
+  onSave,
+  onClose,
+}: {
+  initial: TargetSleepTimes;
+  timeFormat: TimeFormat;
+  onSave: (value: TargetSleepTimes) => Promise<void>;
+  onClose: () => void;
+}) {
   const [bed, setBed] = useState(() => clockValue(initial.bedtimeMinutes, timeFormat));
   const [wake, setWake] = useState(() => clockValue(initial.wakeMinutes, timeFormat));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!active) return;
-    setBed(clockValue(initial.bedtimeMinutes, timeFormat));
-    setWake(clockValue(initial.wakeMinutes, timeFormat));
-    setError('');
-  }, [active, initial, timeFormat]);
 
   const field = (label: string, value: ClockValue, setValue: (value: ClockValue) => void) => (
     <View style={styles.clockGroup}>
