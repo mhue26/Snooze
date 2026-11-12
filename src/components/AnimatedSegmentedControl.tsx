@@ -30,16 +30,21 @@ export function AnimatedSegmentedControl<T extends string>({
   onSelect,
   groupAccessibilityLabel,
   optionStyle,
+  disabled = false,
+  muted = false,
 }: {
   options: readonly SegmentOption<T>[];
   value: T;
   onSelect: (value: T) => void;
   groupAccessibilityLabel: string;
   optionStyle?: StyleProp<ViewStyle>;
+  disabled?: boolean;
+  /** Muted track and highlight (e.g. feature off). */
+  muted?: boolean;
 }) {
   const [layouts, setLayouts] = useState<Partial<Record<T, { x: number; width: number }>>>({});
-  const highlightX = useRef(new Animated.Value(0)).current;
-  const highlightW = useRef(new Animated.Value(0)).current;
+  const [highlightX] = useState(() => new Animated.Value(0));
+  const [highlightW] = useState(() => new Animated.Value(0));
   const hasAnimated = useRef(false);
 
   useEffect(() => {
@@ -68,12 +73,17 @@ export function AnimatedSegmentedControl<T extends string>({
   const currentLayout = layouts[value];
 
   return (
-    <View accessibilityRole="radiogroup" accessibilityLabel={groupAccessibilityLabel} style={settingsControlStyles.track}>
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel={groupAccessibilityLabel}
+      style={[settingsControlStyles.track, muted && styles.trackMuted]}
+    >
       {currentLayout && (
         <Animated.View
           pointerEvents="none"
           style={[
             styles.highlight,
+            muted && styles.highlightMuted,
             {
               left: highlightX,
               width: highlightW,
@@ -86,7 +96,8 @@ export function AnimatedSegmentedControl<T extends string>({
           key={option.value}
           accessibilityRole="radio"
           accessibilityLabel={option.accessibilityLabel}
-          accessibilityState={{ checked: value === option.value }}
+          accessibilityState={{ checked: value === option.value, disabled }}
+          disabled={disabled}
           onPress={() => onSelect(option.value)}
           onLayout={event => {
             const { x, width } = event.nativeEvent.layout;
@@ -104,6 +115,7 @@ export function AnimatedSegmentedControl<T extends string>({
 }
 
 const styles = StyleSheet.create({
+  trackMuted: { opacity: 0.45 },
   highlight: {
     position: 'absolute',
     top: SETTINGS_INSET,
@@ -111,6 +123,7 @@ const styles = StyleSheet.create({
     borderRadius: SETTINGS_INNER_RADIUS,
     backgroundColor: theme.buttonFill,
   },
+  highlightMuted: { backgroundColor: theme.textOnNightFaint },
   option: {
     minWidth: 40,
     height: SETTINGS_INNER_HEIGHT,

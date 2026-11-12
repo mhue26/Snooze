@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import type { SQLiteDatabase } from 'expo-sqlite';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWeekStart } from '../context/WeekStartContext';
 import { authenticateDeletion } from '../data/authenticateDeletion';
 import { clearSleepData, type ExportFormat } from '../data/deviceData';
 import { shareDeviceDataExport } from '../data/shareDeviceDataExport';
 import { AnimatedSegmentedControl } from '../components/AnimatedSegmentedControl';
-import { TargetSleepTimesModal } from '../components/TargetSleepTimesModal';
+import { TargetSleepTimesDropdown } from '../components/TargetSleepTimesDropdown';
+import { useAnimatedDropdown } from '../hooks/useAnimatedDropdown';
 import { OpenSourceNoticesScreen } from './OpenSourceNoticesScreen';
 import {
   SETTINGS_INNER_HEIGHT,
@@ -16,12 +17,14 @@ import {
   settingsControlStyles,
 } from '../theme/settingsControls';
 import { formatSleepTime, type TimeFormat } from '../domain/sleep';
-import { DEFAULT_TARGET_SLEEP, formatTargetSleepRange } from '../domain/targetSleep';
+import { DEFAULT_TARGET_SLEEP } from '../domain/targetSleep';
 import { theme, typography } from '../theme/tokens';
 
 const deleteIconColor = '#9e3a3a';
 const destructiveRed = '#d64545';
 const TOP_INSET_EXTRA = 20;
+const TIME_FORMAT_DROPDOWN_HEIGHT = 100;
+const TARGET_SLEEP_DROPDOWN_HEIGHT = 280;
 type SunTimesToggle = 'off' | 'on';
 
 const TIME_FORMAT_OPTIONS: { value: TimeFormat; label: string }[] = [
@@ -33,10 +36,11 @@ function timeFormatLabel(format: TimeFormat): string {
   return format === '24h' ? '24-hour' : '12-hour';
 }
 
-function DisclosureChevron({ open = false }: { open?: boolean }) {
+function DisclosureChevron({ progress }: { progress: Animated.Value }) {
+  const rotation = progress.interpolate({ inputRange: [0, 1], outputRange: ['45deg', '135deg'] });
   return (
     <View style={styles.disclosureChevron} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-      <View style={[styles.disclosureChevronIcon, open && styles.disclosureChevronIconOpen]} />
+      <Animated.View style={[styles.disclosureChevronIcon, { transform: [{ rotate: rotation }] }]} />
     </View>
   );
 }
@@ -57,9 +61,9 @@ function TrashIcon({ color }: { color: string }) {
 export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCleared: () => void }) {
   const insets = useSafeAreaInsets();
   const [showNotices, setShowNotices] = useState(false);
-  const [timeFormatMenuOpen, setTimeFormatMenuOpen] = useState(false);
+  const timeFormatDropdown = useAnimatedDropdown(TIME_FORMAT_DROPDOWN_HEIGHT);
+  const targetSleepDropdown = useAnimatedDropdown(TARGET_SLEEP_DROPDOWN_HEIGHT);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [showTargetSleep, setShowTargetSleep] = useState(false);
   const [busy, setBusy] = useState(false);
   const {
     weekStartsOn,
@@ -67,11 +71,12 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
     timeFormat,
     setTimeFormat,
     sunriseSunsetEnabled,
+    sunriseSunsetBusy,
     setSunriseSunsetEnabled,
     targetSleepTimes,
     setTargetSleepTimes,
   } = useWeekStart();
-  const targetSleepLabel = formatTargetSleepRange(targetSleepTimes, minutes => formatSleepTime(minutes, timeFormat));
+  const targetSleepLabel = `${formatSleepTime(targetSleepTimes.bedtimeMinutes, timeFormat)} – ${formatSleepTime(targetSleepTimes.wakeMinutes, timeFormat)}`;
 
   if (showNotices) {
     return (
@@ -129,12 +134,30 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Target sleep times, ${targetSleepLabel}`}
-            onPress={() => setShowTargetSleep(true)}
+            accessibilityState={{ expanded: targetSleepDropdown.open }}
+            onPress={() => targetSleepDropdown.setOpenAnimated(!targetSleepDropdown.open)}
             style={({ pressed }) => [styles.settingsRow, pressed && styles.rowPressed]}
           >
             <Text style={[styles.settingLabel, styles.rowLabel]}>Target sleep times</Text>
-            <Text style={styles.settingValue}>{targetSleepLabel}</Text>
+            <View style={styles.disclosureTrailing}>
+              <Text style={styles.settingDetail}>{targetSleepLabel}</Text>
+              <DisclosureChevron progress={targetSleepDropdown.progress} />
+            </View>
           </Pressable>
+          {targetSleepDropdown.mounted && (
+            <Animated.View
+              importantForAccessibility={targetSleepDropdown.open ? 'auto' : 'no-hide-descendants'}
+              pointerEvents={targetSleepDropdown.open ? 'auto' : 'none'}
+              style={[styles.dropdownPanel, targetSleepDropdown.panelStyle]}
+            >
+              <TargetSleepTimesDropdown
+                active={targetSleepDropdown.open}
+                initial={targetSleepTimes}
+                onSave={setTargetSleepTimes}
+                onClose={() => targetSleepDropdown.setOpenAnimated(false)}
+              />
+            </Animated.View>
+          )}
         </View>
       </View>
 
@@ -158,18 +181,24 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Time format, ${timeFormatLabel(timeFormat)}`}
-            accessibilityState={{ expanded: timeFormatMenuOpen }}
-            onPress={() => setTimeFormatMenuOpen(open => !open)}
+            accessibilityState={{ expanded: timeFormatDropdown.open }}
+            onPress={() => timeFormatDropdown.setOpenAnimated(!timeFormatDropdown.open)}
             style={({ pressed }) => [styles.settingsRow, pressed && styles.rowPressed]}
           >
             <Text style={[styles.settingLabel, styles.rowLabel]}>Time format</Text>
             <View style={styles.disclosureTrailing}>
               <Text style={styles.settingDetail}>{timeFormatLabel(timeFormat)}</Text>
-              <DisclosureChevron open={timeFormatMenuOpen} />
+              <DisclosureChevron progress={timeFormatDropdown.progress} />
             </View>
           </Pressable>
-          {timeFormatMenuOpen && (
-            <View style={styles.dropdownPanel} accessibilityRole="menu" accessibilityLabel="Time format options">
+          {timeFormatDropdown.mounted && (
+            <Animated.View
+              accessibilityRole="menu"
+              accessibilityLabel="Time format options"
+              importantForAccessibility={timeFormatDropdown.open ? 'auto' : 'no-hide-descendants'}
+              pointerEvents={timeFormatDropdown.open ? 'auto' : 'none'}
+              style={[styles.dropdownPanel, timeFormatDropdown.panelStyle]}
+            >
               {TIME_FORMAT_OPTIONS.map((option, index) => (
                 <View key={option.value}>
                   {index > 0 && <View style={styles.dropdownDivider} />}
@@ -181,7 +210,7 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
                       if (option.value !== timeFormat) {
                         void setTimeFormat(option.value).catch(() => Alert.alert('Could not save setting', 'Please try again.'));
                       }
-                      setTimeFormatMenuOpen(false);
+                      timeFormatDropdown.setOpenAnimated(false);
                     }}
                     style={({ pressed }) => [styles.dropdownRow, pressed && styles.rowPressed]}
                   >
@@ -192,7 +221,7 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
                   </Pressable>
                 </View>
               ))}
-            </View>
+            </Animated.View>
           )}
           <View style={styles.divider} />
           <View style={styles.settingsRow}>
@@ -200,12 +229,22 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
             <AnimatedSegmentedControl<SunTimesToggle>
               groupAccessibilityLabel="Sunrise and sunset times"
               value={sunriseSunsetEnabled ? 'on' : 'off'}
-              onSelect={choice => { void setSunriseSunsetEnabled(choice === 'on'); }}
+              disabled={sunriseSunsetBusy}
+              muted={!sunriseSunsetEnabled}
+              optionStyle={styles.dayOption}
+              onSelect={choice => {
+                const enabled = choice === 'on';
+                if (enabled === sunriseSunsetEnabled || sunriseSunsetBusy) return;
+                void setSunriseSunsetEnabled(enabled).then(result => {
+                  if (result === 'denied') Alert.alert('Location access is off', 'Allow location access in device settings to use sunrise and sunset times.');
+                  else if (result === 'unsupported') Alert.alert('Location unavailable', 'This app build does not include location support. Update or rebuild the app to use sunrise and sunset times.');
+                  else if (result === 'unavailable') Alert.alert('Could not get location', 'Check that location services are on, then try again.');
+                }).catch(() => Alert.alert('Could not save setting', 'Please try again.'));
+              }}
               options={[
                 { value: 'off', accessibilityLabel: 'Off' },
                 { value: 'on', accessibilityLabel: 'On' },
               ]}
-              optionStyle={styles.dayOption}
             />
           </View>
         </View>
@@ -216,7 +255,7 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
         <View style={styles.settingsCard}>
           <View style={styles.settingsRow}>
             <Text style={[styles.settingLabel, styles.rowLabel]}>Export data</Text>
-            <View style={[settingsControlStyles.track, styles.exportActions]}>
+            <View style={styles.exportActions}>
               {(['json', 'csv'] as const).map(format => (
                 <Pressable
                   key={format}
@@ -261,13 +300,6 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
         <Text style={styles.link}>Open source notices  →</Text>
       </Pressable>
 
-      <TargetSleepTimesModal
-        visible={showTargetSleep}
-        initial={targetSleepTimes}
-        onClose={() => setShowTargetSleep(false)}
-        onSave={setTargetSleepTimes}
-      />
-
       <Modal transparent animationType="fade" visible={showClearConfirm} onRequestClose={() => setShowClearConfirm(false)}>
         <View style={styles.modalBackdrop} accessibilityViewIsModal>
           <View style={styles.dialog}>
@@ -311,7 +343,6 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   settingLabel: { fontFamily: typography.bodySemibold, color: theme.textOnNight, fontSize: 16 },
-  settingValue: { fontFamily: typography.bodyBold, color: theme.link, fontSize: 14, textAlign: 'right', flexShrink: 1 },
   settingDetail: { fontFamily: typography.body, color: theme.textOnNightMuted, fontSize: 16 },
   disclosureTrailing: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
   disclosureChevron: { width: 12, height: 14, alignItems: 'center', justifyContent: 'center' },
@@ -324,13 +355,8 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '45deg' }],
     marginLeft: -1,
   },
-  disclosureChevronIconOpen: {
-    transform: [{ rotate: '135deg' }],
-    marginTop: -2,
-  },
   dropdownPanel: {
     marginHorizontal: 10,
-    marginBottom: 8,
     borderRadius: 12,
     backgroundColor: theme.screen,
     overflow: 'hidden',
@@ -363,7 +389,7 @@ const styles = StyleSheet.create({
   },
   deleteButtonPressed: { opacity: 0.65 },
   deleteButtonDisabled: { opacity: 0.45 },
-  exportActions: { gap: SETTINGS_INSET },
+  exportActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   exportFormatButton: {
     ...settingsControlStyles.innerPill,
     minWidth: 48,
