@@ -8,6 +8,7 @@ export type DeviceSettings = {
   timeFormat: TimeFormat;
   sunriseSunsetEnabled: boolean;
   targetSleepTimes: TargetSleepTimes;
+  sleepNeedMinutes?: number;
 };
 
 export type ExportFormat = 'json' | 'csv';
@@ -50,6 +51,7 @@ function exportAsCsv(settings: DeviceSettings, sleepRecords: SleepExportRow[], n
     `sunriseSunsetEnabled,${csvCell(settings.sunriseSunsetEnabled ? '1' : '0')}`,
     `targetBedtimeMinutes,${csvCell(settings.targetSleepTimes.bedtimeMinutes)}`,
     `targetWakeMinutes,${csvCell(settings.targetSleepTimes.wakeMinutes)}`,
+    ...(settings.sleepNeedMinutes != null ? [`sleepNeedMinutes,${csvCell(settings.sleepNeedMinutes)}`] : []),
     '',
     'type,date,start_minutes,end_minutes',
     ...sleepRecords.map(record => ['sleep', record.date, record.bedtimeMinutes, record.wakeMinutes].map(csvCell).join(',')),

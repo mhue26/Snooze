@@ -1,14 +1,17 @@
 import * as SecureStore from 'expo-secure-store';
 import type { WeekStartsOn } from '../domain/dates';
 import type { TimeFormat } from '../domain/sleep';
+import { DEFAULT_SLEEP_NEED_MINUTES, isValidSleepNeed } from '../domain/sleepNeed';
 import { DEFAULT_TARGET_SLEEP, isValidTargetSleepTimes, type TargetSleepTimes } from '../domain/targetSleep';
 
 export const WEEK_STARTS_ON_KEY = 'snooze.settings.weekStartsOn';
 export const TIME_FORMAT_KEY = 'snooze.settings.timeFormat';
 export const SUNRISE_SUNSET_KEY = 'snooze.settings.sunriseSunset';
 export const SUN_LOCATION_KEY = 'snooze.settings.sunLocation';
+export const SUN_LOCATION_FETCHED_AT_KEY = 'snooze.settings.sunLocationFetchedAt';
 export const TARGET_BEDTIME_KEY = 'snooze.settings.targetBedtimeMinutes';
 export const TARGET_WAKE_KEY = 'snooze.settings.targetWakeMinutes';
+export const SLEEP_NEED_KEY = 'snooze.settings.sleepNeedMinutes';
 
 export type StoredCoordinates = { latitude: number; longitude: number };
 
@@ -62,6 +65,19 @@ export async function saveCachedSunLocation(coords: StoredCoordinates | null): P
     await SecureStore.setItemAsync(SUN_LOCATION_KEY, JSON.stringify(coords));
   } else {
     await SecureStore.deleteItemAsync(SUN_LOCATION_KEY);
+    await SecureStore.deleteItemAsync(SUN_LOCATION_FETCHED_AT_KEY);
+  }
+}
+
+export async function loadCachedSunLocationFetchedAt(): Promise<string | null> {
+  return await SecureStore.getItemAsync(SUN_LOCATION_FETCHED_AT_KEY);
+}
+
+export async function saveCachedSunLocationFetchedAt(value: string | null): Promise<void> {
+  if (value) {
+    await SecureStore.setItemAsync(SUN_LOCATION_FETCHED_AT_KEY, value);
+  } else {
+    await SecureStore.deleteItemAsync(SUN_LOCATION_FETCHED_AT_KEY);
   }
 }
 
@@ -88,6 +104,18 @@ export async function saveTargetSleepTimes(value: TargetSleepTimes): Promise<voi
   if (!isValidTargetSleepTimes(value)) throw new Error('Invalid target sleep times');
   await SecureStore.setItemAsync(TARGET_BEDTIME_KEY, String(value.bedtimeMinutes));
   await SecureStore.setItemAsync(TARGET_WAKE_KEY, String(value.wakeMinutes));
+}
+
+export async function loadSleepNeedMinutes(): Promise<number> {
+  const value = await SecureStore.getItemAsync(SLEEP_NEED_KEY);
+  if (value === null) return DEFAULT_SLEEP_NEED_MINUTES;
+  const parsed = Number(value);
+  return isValidSleepNeed(parsed) ? parsed : DEFAULT_SLEEP_NEED_MINUTES;
+}
+
+export async function saveSleepNeedMinutes(value: number): Promise<void> {
+  if (!isValidSleepNeed(value)) throw new Error('Invalid sleep need minutes');
+  await SecureStore.setItemAsync(SLEEP_NEED_KEY, String(value));
 }
 
 

@@ -7,6 +7,7 @@ import { authenticateDeletion } from '../data/authenticateDeletion';
 import { clearSleepData, type ExportFormat } from '../data/deviceData';
 import { shareDeviceDataExport } from '../data/shareDeviceDataExport';
 import { AnimatedSegmentedControl } from '../components/AnimatedSegmentedControl';
+import { SleepNeedDropdown } from '../components/SleepNeedDropdown';
 import { TargetSleepTimesDropdown } from '../components/TargetSleepTimesDropdown';
 import { useAnimatedDropdown } from '../hooks/useAnimatedDropdown';
 import { OpenSourceNoticesScreen } from './OpenSourceNoticesScreen';
@@ -15,7 +16,8 @@ import {
   SETTINGS_OUTER_HEIGHT,
   settingsControlStyles,
 } from '../theme/settingsControls';
-import { formatSleepTime, type TimeFormat } from '../domain/sleep';
+import { formatDurationClock, formatSleepTime, type TimeFormat } from '../domain/sleep';
+import { DEFAULT_SLEEP_NEED_MINUTES } from '../domain/sleepNeed';
 import { DEFAULT_TARGET_SLEEP } from '../domain/targetSleep';
 import { theme, typography } from '../theme/tokens';
 
@@ -24,6 +26,7 @@ const destructiveRed = '#d64545';
 const TOP_INSET_EXTRA = 20;
 const TIME_FORMAT_DROPDOWN_HEIGHT = 100;
 const TARGET_SLEEP_DROPDOWN_HEIGHT = 280;
+const SLEEP_NEED_DROPDOWN_HEIGHT = 160;
 type SunTimesToggle = 'off' | 'on';
 
 const TIME_FORMAT_OPTIONS: { value: TimeFormat; label: string }[] = [
@@ -62,6 +65,7 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
   const [showNotices, setShowNotices] = useState(false);
   const timeFormatDropdown = useAnimatedDropdown(TIME_FORMAT_DROPDOWN_HEIGHT);
   const targetSleepDropdown = useAnimatedDropdown(TARGET_SLEEP_DROPDOWN_HEIGHT);
+  const sleepNeedDropdown = useAnimatedDropdown(SLEEP_NEED_DROPDOWN_HEIGHT);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const {
@@ -74,8 +78,11 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
     setSunriseSunsetEnabled,
     targetSleepTimes,
     setTargetSleepTimes,
+    sleepNeedMinutes,
+    setSleepNeedMinutes,
   } = useWeekStart();
   const targetSleepLabel = `${formatSleepTime(targetSleepTimes.bedtimeMinutes, timeFormat)} – ${formatSleepTime(targetSleepTimes.wakeMinutes, timeFormat)}`;
+  const sleepNeedLabel = formatDurationClock(sleepNeedMinutes);
 
   if (showNotices) {
     return (
@@ -91,7 +98,7 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
   const exportData = async (format: ExportFormat) => {
     setBusy(true);
     try {
-      await shareDeviceDataExport(db, { weekStartsOn, timeFormat, sunriseSunsetEnabled, targetSleepTimes }, format);
+      await shareDeviceDataExport(db, { weekStartsOn, timeFormat, sunriseSunsetEnabled, targetSleepTimes, sleepNeedMinutes }, format);
     } catch {
       Alert.alert('Export failed', 'Your data could not be exported. Please try again.');
     } finally { setBusy(false); }
@@ -114,6 +121,7 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
         await setTimeFormat('12h');
         await setSunriseSunsetEnabled(false);
         await setTargetSleepTimes(DEFAULT_TARGET_SLEEP);
+        await setSleepNeedMinutes(DEFAULT_SLEEP_NEED_MINUTES);
         Alert.alert('Device data cleared', 'Sleep and nap records were deleted and settings were reset.');
       } catch {
         Alert.alert('Records cleared', 'Sleep and nap records were deleted, but settings could not be fully reset.');
@@ -128,7 +136,7 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
       <Text accessibilityRole="header" style={styles.title}>Settings</Text>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={styles.sectionHeader}>PERSONALIZATION</Text>
+        <Text accessibilityRole="header" style={styles.sectionHeader}>PERSONALISATION</Text>
         <View style={styles.settingsCard}>
           <Pressable
             accessibilityRole="button"
@@ -152,8 +160,38 @@ export function DataScreen({ db, onDataCleared }: { db: SQLiteDatabase; onDataCl
               <TargetSleepTimesDropdown
                 active={targetSleepDropdown.open}
                 initial={targetSleepTimes}
+                sleepNeedMinutes={sleepNeedMinutes}
                 onSave={setTargetSleepTimes}
                 onClose={() => targetSleepDropdown.setOpenAnimated(false)}
+              />
+            </Animated.View>
+          )}
+          <View style={styles.divider} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Sleep need, ${sleepNeedLabel}`}
+            accessibilityState={{ expanded: sleepNeedDropdown.open }}
+            onPress={() => sleepNeedDropdown.setOpenAnimated(!sleepNeedDropdown.open)}
+            style={({ pressed }) => [styles.settingsRow, pressed && styles.rowPressed]}
+          >
+            <Text style={[styles.settingLabel, styles.rowLabel]}>Sleep need</Text>
+            <View style={styles.disclosureTrailing}>
+              <Text style={styles.settingDetail}>{sleepNeedLabel}</Text>
+              <DisclosureChevron progress={sleepNeedDropdown.progress} />
+            </View>
+          </Pressable>
+          {sleepNeedDropdown.mounted && (
+            <Animated.View
+              importantForAccessibility={sleepNeedDropdown.open ? 'auto' : 'no-hide-descendants'}
+              pointerEvents={sleepNeedDropdown.open ? 'auto' : 'none'}
+              style={[styles.dropdownPanel, sleepNeedDropdown.panelStyle]}
+            >
+              <SleepNeedDropdown
+                active={sleepNeedDropdown.open}
+                initial={sleepNeedMinutes}
+                targetSleepTimes={targetSleepTimes}
+                onSave={setSleepNeedMinutes}
+                onClose={() => sleepNeedDropdown.setOpenAnimated(false)}
               />
             </Animated.View>
           )}
