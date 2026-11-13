@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTimeFormat } from '../context/WeekStartContext';
+import { DEFAULT_SLEEP_NEED_MINUTES, suggestedBedtimeMinutes } from '../domain/sleepNeed';
 import { isValidTargetSleepTimes, type TargetSleepTimes } from '../domain/targetSleep';
 import { parseClockDigits, type TimeFormat } from '../domain/sleep';
 import { theme, typography } from '../theme/tokens';
@@ -23,22 +24,25 @@ function clockDisplay(digits: string): string {
 export function TargetSleepTimesDropdown({
   initial,
   active,
+  sleepNeedMinutes = DEFAULT_SLEEP_NEED_MINUTES,
   onSave,
   onClose,
 }: {
   initial: TargetSleepTimes;
   active: boolean;
+  sleepNeedMinutes?: number;
   onSave: (value: TargetSleepTimes) => Promise<void>;
   onClose: () => void;
 }) {
   const { timeFormat } = useTimeFormat();
-  const resetKey = `${active ? 'active' : 'inactive'}-${initial.bedtimeMinutes}-${initial.wakeMinutes}-${timeFormat}`;
+  const resetKey = `${active ? 'active' : 'inactive'}-${initial.bedtimeMinutes}-${initial.wakeMinutes}-${timeFormat}-${sleepNeedMinutes}`;
 
   return (
     <TargetSleepTimesForm
       key={resetKey}
       initial={initial}
       timeFormat={timeFormat}
+      sleepNeedMinutes={sleepNeedMinutes}
       onSave={onSave}
       onClose={onClose}
     />
@@ -48,20 +52,48 @@ export function TargetSleepTimesDropdown({
 function TargetSleepTimesForm({
   initial,
   timeFormat,
+  sleepNeedMinutes,
   onSave,
   onClose,
 }: {
   initial: TargetSleepTimes;
   timeFormat: TimeFormat;
+  sleepNeedMinutes: number;
   onSave: (value: TargetSleepTimes) => Promise<void>;
   onClose: () => void;
 }) {
   const [bed, setBed] = useState(() => clockValue(initial.bedtimeMinutes, timeFormat));
   const [wake, setWake] = useState(() => clockValue(initial.wakeMinutes, timeFormat));
+  const [bedPeriodUserOverridden, setBedPeriodUserOverridden] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const field = (label: string, value: ClockValue, setValue: (value: ClockValue) => void) => (
+  const wakeMinutes = parseClockDigits(wake.digits, timeFormat, wake.period);
+  const suggestedBed = useMemo(() => {
+    if (wakeMinutes === null) return null;
+    const minutes = suggestedBedtimeMinutes(wakeMinutes, sleepNeedMinutes);
+    return {
+      minutes,
+      clock: clockValue(minutes, timeFormat),
+    };
+  }, [wakeMinutes, sleepNeedMinutes, timeFormat]);
+
+  const activeBedPeriod = bed.digits === '' && suggestedBed && !bedPeriodUserOverridden
+    ? suggestedBed.clock.period
+    : bed.period;
+
+  const bedPlaceholder = bed.digits === '' && suggestedBed
+    ? clockDisplay(suggestedBed.clock.digits)
+    : 'HH:MM';
+
+  const field = (
+    label: string,
+    value: ClockValue,
+    setValue: (value: ClockValue) => void,
+    placeholder = 'HH:MM',
+    currentPeriod = value.period,
+    onSelectPeriod?: (period: 'AM' | 'PM') => void,
+  ) => (
     <View style={styles.clockGroup}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
@@ -70,7 +102,7 @@ function TargetSleepTimesForm({
         value={clockDisplay(value.digits)}
         keyboardType="number-pad"
         maxLength={5}
-        placeholder="HH:MM"
+        placeholder={placeholder}
         placeholderTextColor={theme.textOnNightMuted}
         selectionColor={theme.buttonFill}
         cursorColor={theme.buttonFill}
@@ -88,11 +120,14 @@ function TargetSleepTimesForm({
               key={period}
               accessibilityRole="radio"
               accessibilityLabel={`${label} ${period}`}
-              accessibilityState={{ checked: value.period === period }}
-              onPress={() => setValue({ ...value, period })}
-              style={[styles.clockPeriod, value.period === period && styles.selectedPeriod]}
+              accessibilityState={{ checked: currentPeriod === period }}
+              onPress={() => {
+                if (onSelectPeriod) onSelectPeriod(period);
+                else setValue({ ...value, period });
+              }}
+              style={[styles.clockPeriod, currentPeriod === period && styles.selectedPeriod]}
             >
-              <Text style={[styles.periodText, value.period === period && styles.periodTextSelected]}>{period}</Text>
+              <Text style={[styles.periodText, currentPeriod === period && styles.periodTextSelected]}>{period}</Text>
             </Pressable>
           ))}
         </View>
@@ -102,13 +137,15 @@ function TargetSleepTimesForm({
 
   const save = async () => {
     if (saving) return;
-    const bedtimeMinutes = parseClockDigits(bed.digits, timeFormat, bed.period);
-    const wakeMinutes = parseClockDigits(wake.digits, timeFormat, wake.period);
-    if (bedtimeMinutes === null || wakeMinutes === null) {
+    const bedtimeMinutes = bed.digits === '' && suggestedBed
+      ? suggestedBed.minutes
+      : parseClockDigits(bed.digits, timeFormat, activeBedPeriod);
+    const parsedWake = parseClockDigits(wake.digits, timeFormat, wake.period);
+    if (bedtimeMinutes === null || parsedWake === null) {
       setError(timeFormat === '24h' ? 'Enter valid times from 00:00 to 23:59.' : 'Enter valid times from 01:00 to 12:59.');
       return;
     }
-    const next: TargetSleepTimes = { bedtimeMinutes, wakeMinutes };
+    const next: TargetSleepTimes = { bedtimeMinutes, wakeMinutes: parsedWake };
     if (!isValidTargetSleepTimes(next)) {
       setError('Bedtime and wake time must define a sleep period.');
       return;
@@ -128,7 +165,20 @@ function TargetSleepTimesForm({
   return (
     <View style={styles.content}>
       <View style={styles.clockFields}>
-        {field('Bedtime', bed, setBed)}
+        {field(
+          'Bedtime',
+          bed,
+          next => {
+            if (next.digits === '') setBedPeriodUserOverridden(false);
+            setBed(next);
+          },
+          bedPlaceholder,
+          activeBedPeriod,
+          period => {
+            setBedPeriodUserOverridden(true);
+            setBed({ ...bed, period });
+          },
+        )}
         {field('Wake time', wake, setWake)}
       </View>
       {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}

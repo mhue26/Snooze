@@ -14,7 +14,6 @@ import { daysBetween, formatDurationClock, formatSleepTime, localDateKey, parseC
 import { monthProgress } from '../domain/monthProgress';
 import { canBeginTodaySwipe, historySurfaceRelease } from '../domain/historyGesture';
 import { calculateSleepDebt, DEBT_WINDOW_DAYS } from '../domain/sleepDebt';
-import { targetSleepDurationMinutes } from '../domain/targetSleep';
 import { theme, typography } from '../theme/tokens';
 
 type TimeFields = { hour: string; minute: string; period: 'AM' | 'PM' };
@@ -291,11 +290,8 @@ function DateOverview({ date, db, refresh, onPress, compact = false, location, o
 }
 
 function SleepDebtCard({ date, db, refresh }: { date: string; db: SQLiteDatabase; refresh: number }) {
-  const { targetSleepTimes } = useWeekStart();
-  const baselineMinutes = useMemo(
-    () => targetSleepDurationMinutes(targetSleepTimes) ?? 8 * 60,
-    [targetSleepTimes],
-  );
+  const { sleepNeedMinutes } = useWeekStart();
+  const baselineMinutes = sleepNeedMinutes;
   const [result, setResult] = useState<{ date: string; refresh: number; minutes: number; recordedDays: number; error: boolean } | null>(null);
   useEffect(() => {
     let active = true;
